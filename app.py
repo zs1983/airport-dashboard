@@ -1,55 +1,58 @@
-import streamlit as st
 import pandas as pd
 import plotly.express as px
-from streamlit_autorefresh import st_autorefresh
+import streamlit as st
 
-# Page Layout Setting
-st.set_page_config(page_title="Live Airport Dashboard", layout="wide")
-
-# Har 3 seconds baad dashboard auto-refresh hoga
-st_autorefresh(interval=3000, key="airportrefresh")
+# Page configuration
+st.set_page_config(
+    page_title="Live Airport Coordinate Dashboard", layout="wide"
+)
 
 st.title("🌍 Live Airport Coordinate Dashboard")
-st.markdown("Yeh dashboard real-time data update ke sath airports ki locations map par dikhata hai.")
+st.write(
+    "Yeh dashboard real-time data update ke sath airports ki locations map"
+    " par dikhata hai."
+)
 
-# CSV File Load karein
-try:
-    df = pd.read_csv("airports.csv")
-except FileNotFoundError:
-    st.error("airports.csv file nahi mili! Usay project folder mein rakhein.")
-    st.stop()
 
-# Sidebar Filters
+# Data load karne ka function
+@st.cache_data
+def load_data():
+  df = pd.read_csv("airports.csv")
+  return df
+
+
+df = load_data()
+
+# Sidebar filters
 st.sidebar.header("Filter Options")
-selected_city = st.sidebar.selectbox("City Select Karein", ["All Cities"] + list(df["City"].unique()))
-
-if selected_city != "All Cities":
-    filtered_df = df[df["City"] == selected_city]
-else:
+if "city" in df.columns:
+  cities = ["All Cities"] + sorted(df["city"].dropna().unique().tolist())
+  selected_city = st.sidebar.selectbox("City Select Karein", cities)
+  if selected_city != "All Cities":
+    filtered_df = df[df["city"] == selected_city]
+  else:
     filtered_df = df
+else:
+  filtered_df = df
 
-# Metrics Row
+# Top Metrics
+total_airports = len(df)
+displayed_airports = len(filtered_df)
+
 col1, col2 = st.columns(2)
-col1.metric("Total Airports Tracked", len(df))
-col2.metric("Currently Displayed", len(filtered_df))
+col1.metric("Total Airports Tracked", total_airports)
+col2.metric("Currently Displayed", displayed_airports)
 
-# Interactive Map Visualization
-fig = px.scatter_mapbox(
-    filtered_df, 
-    lat="Latitude", 
-    lon="Longitude", 
-    hover_name="Airport",
-    hover_data=["City", "Coordinates"],
-    zoom=1.5, 
-    height=550
-)
-fig.update_layout(
-    mapbox_style="carto-positron", 
-    margin={"r":0,"t":0,"l":0,"b":0}
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-# Data Table View
-with st.expander("📄 Raw Data Table Dekhein"):
-    st.dataframe(filtered_df, use_container_width=True)
+# Map visualization using scatter_geo (no token required)
+if not filtered_df.empty:
+  fig = px.scatter_geo(
+      filtered_df,
+      lat="lat",
+      lon="lon",
+      hover_name="name" if "name" in filtered_df.columns else None,
+      projection="natural earth",
+  )
+  fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
+  st.plotly_chart(fig, use_container_width=True)
+else:
+  st.warning("Selected filter ke liye koi airport nahi mila.")
