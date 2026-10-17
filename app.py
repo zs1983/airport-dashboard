@@ -134,6 +134,7 @@ OM_SOURCES = [("Open-Meteo.com", "Best match", "best_match")]
 SITES = [
     ("weather.gov/wrh/timeseries", "https://www.weather.gov/wrh/timeseries"),
     ("aviationweather.gov", "https://aviationweather.gov/data/metar/"),
+    ("wunderground.com", "https://www.wunderground.com/"),
 ]
 TITLE_RE = re.compile(r"^Highest temperature in (.+?) on (.+?)\?*$", re.I)
 
@@ -391,7 +392,7 @@ def day_end_pkt(end_iso: str, tzname: str) -> str:
 
 # ------------------------------------------------------------- table ------
 # Light background per source for the "Current" columns
-CUR_BG = ["#d6ecff", "#d9f5dc"]
+CUR_BG = ["#d6ecff", "#d9f5dc", "#fff4c2"]
 MET_CUR_BG = "#ffe8cc"  # light orange for Met Website "Current"
 
 # Frozen (sticky) left columns: widths in px, left offsets are cumulative
@@ -475,6 +476,8 @@ def build_table(rows: list[dict]) -> str:
         om = r["src"].get("Open-Meteo.com", {})
         metar_url = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
         timeseries_url = f"https://www.weather.gov/wrh/timeseries?site={r['icao'].lower()}"
+        wunderground_url = f"https://www.wunderground.com/history/daily/{r['icao']}"
+        site_urls = [timeseries_url, metar_url, wunderground_url]
 
         def observed(val, url, note):
             """Airport METAR reading; METAR na mile to model value + '(model)'."""
@@ -496,7 +499,7 @@ def build_table(rows: list[dict]) -> str:
 
         # 2 websites: Current + Max. Recd. (same airport METAR, link to each site's page)
         for si, (nm, _home) in enumerate(SITES):
-            url = timeseries_url if si == 0 else metar_url
+            url = site_urls[si]
             for k in ("current", "max_rec"):
                 cell = observed(r["cur_v"] if k == "current" else r["max_v"], url,
                                 f"{r['icao']} - {nm} (METAR value, last obs {r['obs_note']})")
@@ -639,8 +642,9 @@ with tab_t:
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
     st.caption("AIRPORT DATA: har city ke saath uska Polymarket resolution airport (ICAO code) likha hai. "
-               "'weather.gov/wrh/timeseries' aur 'aviationweather.gov' dono columns mein us airport ki NOAA METAR reading hai "
-               "(Current aur us din ka Max. Recd.). Dono ka data ek hi METAR feed (aviationweather.gov) se aata hai, is liye numbers ek jaise hain; "
+               "'weather.gov/wrh/timeseries', 'aviationweather.gov' aur 'wunderground.com' teeno columns mein us airport ki NOAA METAR reading hai "
+               "(Current aur us din ka Max. Recd.). Teeno ka data ek hi METAR feed (aviationweather.gov) se aata hai, is liye numbers ek jaise hain "
+               "(wunderground.com par click se us airport station ka Weather Underground history page khulta hai; us site ke apne numbers maine nahi parhe); "
                "'weather.gov/wrh/timeseries' wale numbers par click karne se woh NOAA time-series page khulta hai jahan Polymarket settle karta hai "
                "(us page par chhoti extra readings ki wajah se max thoda alag ho sakta hai). METAR na mile to value ke neeche '(model)' likha aata hai. "
                "Tomorrow / Day After Tomorrow columns (Met Website ke neeche aur dono websites ke neeche) abhi record nahi hue, is liye forecast max hain "
