@@ -171,11 +171,11 @@ def _json_list(v):
         return []
 
 
-def get_retry(url, params, tries=3):
+def get_retry(url, params, tries=3, headers=None):
     """GET with backoff on 429/5xx (honours Retry-After)."""
     last = None
     for attempt in range(tries):
-        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r = requests.get(url, params=params, timeout=TIMEOUT, **({"headers": headers} if headers else {}))
         if r.status_code not in (429, 500, 502, 503, 504):
             r.raise_for_status()
             return r
@@ -310,6 +310,133 @@ def fetch_metar(icaos: tuple) -> tuple[dict, str | None]:
         if key in _store():
             return _store()[key], msg + " - purana data dikha raha hn."
         return {}, msg
+
+
+# ---------------------------------------------- official met-service data ----
+# Sirf in cities ka us desh ki met service se free/bina key ka data milta hai. Baqi cities mein "Click" aata hai.
+FMI_URL = "https://opendata.fmi.fi/wfs"
+SG_TEMP_URL = "https://api.data.gov.sg/v1/environment/air-temperature"
+SG_FC_URL = "https://api.data.gov.sg/v1/environment/4-day-weather-forecast"
+HKO_URL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php"
+NWS_UA = {"User-Agent": "polymarket-temperature-dashboard (streamlit)", "Accept": "application/geo+json"}
+OFFICIAL = {   # city -> (kind, local tz, extra)
+    "helsinki": ("fmi", "Europe/Helsinki", {"fmisid": "100968", "stn": "Helsinki-Vantaa airport (FMI)"}),
+    "singapore": ("sg", "Asia/Singapore", {"stn": "Changi (MSS/NEA)"}),
+    "hong kong": ("hko", "Asia/Hong_Kong", {"stn": "Chek Lap Kok - HK airport (HKO)"}),
+    "nyc": ("nws", "America/New_York", {"icao": "KLGA", "lat": 40.7769, "lon": -73.8740, "stn": "LaGuardia KLGA (NWS)"}),
+    "denver": ("nws", "America/Denver", {"icao": "KBKF", "lat": 39.7017, "lon": -104.7517, "stn": "Buckley KBKF (NWS)"}),
+}
+
+
+def _prep_url(url, params):
+    return requests.Request("GET", url, params=params).prepare().url
+
+
+def _official_one(kind: str, tzname: str, x: dict) -> dict:
+    """{'current','max_rec','high_d1','high_d2'} -> (value C or None, source page url, note)."""
+    zi = ZoneInfo(tzname)
+    now_l = datetime.now(zi)
+    d0 = now_l.date()
+    d1, d2 = d0 + timedelta(days=1), d0 + timedelta(days=2)
+    out: dict = {}
+    if kind == "fmi":
+        start = datetime.combine(d0, datetime.min.time(), tzinfo=zi).astimezone(timezone.utc)
+        prm = {"service": "WFS", "version": "2.0.0", "request": "getFeature",
+               "storedquery_id": "fmi::observations::weather::simple", "fmisid": x["fmisid"],
+               "parameters": "t2m", "timestep": 10,
+               "starttime": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "endtime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        r = get_retry(FMI_URL, prm)
+        vals = [(t, float(v)) for t, v in re.findall(
+            r"<BsWfs:Time>([^<]+)</BsWfs:Time>\s*<BsWfs:ParameterValue>([^<]+)</BsWfs:ParameterValue>", r.text)
+            if v.strip().lower() != "nan"]
+        if vals:
+            u = _prep_url(FMI_URL, prm)
+            out["current"] = (vals[-1][1], u, f"{x['stn']} - last obs {vals[-1][0]}")
+            out["max_rec"] = (max(v for _, v in vals), u, f"{x['stn']} - max since local midnight")
+    elif kind == "sg":
+        prm = {"date": d0.isoformat()}
+        r = get_retry(SG_TEMP_URL, prm)
+        vals = [(it["timestamp"], rd["value"]) for it in r.json().get("items", [])
+                for rd in it.get("readings", []) if rd.get("station_id") == "S24" and rd.get("value") is not None]
+        if vals:
+            u = _prep_url(SG_TEMP_URL, prm)
+            out["current"] = (float(vals[-1][1]), u, f"{x['stn']} - last obs {vals[-1][0]}")
+            out["max_rec"] = (float(max(v for _, v in vals)), u, f"{x['stn']} - max since local midnight")
+        try:
+            fc = get_retry(SG_FC_URL, None).json()["items"][0]["forecasts"]
+            by = {f["date"]: f["temperature"]["high"] for f in fc}
+            for k, d in (("high_d1", d1), ("high_d2", d2)):
+                if d.isoformat() in by:
+                    out[k] = (float(by[d.isoformat()]), SG_FC_URL, "MSS 4-day forecast (Singapore-wide high)")
+        except (requests.RequestException, KeyError, IndexError, ValueError):
+            pass
+    elif kind == "hko":
+        prm = {"dataType": "rhrread", "lang": "en"}
+        r = get_retry(HKO_URL, prm).json()
+        for e in r.get("temperature", {}).get("data", []):
+            if e.get("place") == "Chek Lap Kok" and e.get("value") is not None:
+                out["current"] = (float(e["value"]), _prep_url(HKO_URL, prm),
+                                  f"{x['stn']} - {r.get('temperature', {}).get('recordTime', '')}")
+        try:
+            prm2 = {"dataType": "fnd", "lang": "en"}
+            fc = get_retry(HKO_URL, prm2).json().get("weatherForecast", [])
+            by = {f["forecastDate"]: f["forecastMaxtemp"]["value"] for f in fc}
+            for k, d in (("high_d1", d1), ("high_d2", d2)):
+                if d.strftime("%Y%m%d") in by:
+                    out[k] = (float(by[d.strftime("%Y%m%d")]), _prep_url(HKO_URL, prm2), "HKO 9-day forecast (Hong Kong-wide high)")
+        except (requests.RequestException, KeyError, ValueError):
+            pass
+    elif kind == "nws":
+        icao = x["icao"]
+        page = f"https://www.weather.gov/wrh/timeseries?site={icao}"
+        start = (datetime.now(timezone.utc) - timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        feats = get_retry(f"https://api.weather.gov/stations/{icao}/observations",
+                          {"start": start, "limit": 200}, headers=NWS_UA).json().get("features", [])
+        obs = []
+        for f in feats:
+            pr = f.get("properties", {})
+            v = (pr.get("temperature") or {}).get("value")
+            if v is not None and pr.get("timestamp"):
+                obs.append((datetime.fromisoformat(pr["timestamp"].replace("Z", "+00:00")), float(v)))
+        obs.sort()
+        if obs:
+            out["current"] = (obs[-1][1], page, f"{x['stn']} - last obs {obs[-1][0].astimezone(PKT).strftime('%d %b %I:%M %p PKT')}")
+            today = [v for t, v in obs if t.astimezone(zi).date() == d0]
+            if today:
+                out["max_rec"] = (max(today), page, f"{x['stn']} - max of hourly obs since local midnight")
+        try:
+            pt = get_retry(f"https://api.weather.gov/points/{x['lat']},{x['lon']}", None, headers=NWS_UA).json()
+            per = get_retry(pt["properties"]["forecast"], None, headers=NWS_UA).json()["properties"]["periods"]
+            by = {}
+            for pd_ in per:
+                if pd_.get("isDaytime"):
+                    dt = datetime.fromisoformat(pd_["startTime"]).date()
+                    t = float(pd_["temperature"])
+                    by[dt] = (t - 32) * 5 / 9 if pd_.get("temperatureUnit") == "F" else t
+            fpage = f"https://forecast.weather.gov/MapClick.php?lat={x['lat']}&lon={x['lon']}"
+            for k, d in (("high_d1", d1), ("high_d2", d2)):
+                if d in by:
+                    out[k] = (by[d], fpage, "NWS point forecast (daytime high)")
+        except (requests.RequestException, KeyError, IndexError, ValueError):
+            pass
+    return out
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_official(cities: tuple) -> dict:
+    """{norm_city: {'current'|'max_rec'|'high_d1'|'high_d2': (valueC, url, note)}} - jo mile sirf wahi."""
+    res = {}
+    for c in cities:
+        if c not in OFFICIAL:
+            continue
+        kind, tzname, x = OFFICIAL[c]
+        try:
+            res[c] = _official_one(kind, tzname, x)
+            _store()[("official", c)] = res[c]
+        except (requests.RequestException, KeyError, ValueError, IndexError):
+            res[c] = _store().get(("official", c), {})
+    return res
 
 
 @st.cache_data(ttl=WEATHER_TTL, show_spinner=False)
@@ -477,25 +604,18 @@ def build_table(rows: list[dict]) -> str:
             fz(2, r["day_end"]),
             fz(3, f'<a href="{html.escape(r["link"])}" target="_blank" rel="noopener" style="color:#0b3d91">{r["poly_html"]}</a>', True),
         ]
-        om = r["src"].get("Open-Meteo.com", {})
         metar_url = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
         wunderground_url = f"https://www.wunderground.com/history/daily/{r['icao']}"
 
-        def observed(val, url, note):
-            """Airport METAR reading; METAR na mile to model value + '(model)'."""
-            if r["is_metar"]:
-                return temp_cell(val, url, note)
-            return temp_cell(val, r["met_url"], "METAR available nahi: Open-Meteo model value") \
-                + ('<br><span style="font-size:10px;color:#555">(model)</span>' if val is not None else "")
-
-        # Met Website: Current, Today Max. Recd. (METAR), Tomorrow, Day After (forecast)
+        # Met Website: us desh ki met service ka airport data; na mile to "Click" (met service ka page)
+        off = r["official"]
         for k in ("current", "max_rec", "high_d1", "high_d2"):
-            if k in ("current", "max_rec"):
-                cell = observed(r["cur_v"] if k == "current" else r["max_v"], metar_url,
-                                f"{r['icao']} airport METAR (NOAA) - last obs {r['obs_note']}")
+            if k in off:
+                val, url, note = off[k]
+                cell = temp_cell(val, url, note)
             else:
-                cell = temp_cell(om.get(k), source_url(r["lat"], r["lon"], "best_match"),
-                                 "Forecast max: Open-Meteo Best match model, airport coordinates (met service ka apna forecast nahi)")
+                cell = (f'<a href="{html.escape(r["met_url"])}" target="_blank" rel="noopener" '
+                        f'title="{html.escape(r["met_name"])}: is city ka data dashboard tak nahi aata - website kholein">Click</a>')
             cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
             bg = f"background:{MET_CUR_BG};font-weight:600;" if k == "current" else row_bg
             cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
@@ -583,6 +703,7 @@ weather, w_err, w_stamp = fetch_weather(coords) if coords else ({}, None, None)
 if w_err:
     st.warning(w_err)
 
+official = fetch_official(tuple(sorted({norm_city(r["city"]) for r, _, _, _ in chosen}))) if chosen else {}
 rows = []
 for r, loc, stn, ic in chosen:
     wk = (round(loc["lat"], 4), round(loc["lon"], 4))
@@ -606,7 +727,7 @@ for r, loc, stn, ic in chosen:
                  "day_end": day_end_pkt(r["end"], w["tz"]), "link": r["link"],
                  "poly_html": poly_html, "src": w["src"], "lat": loc["lat"], "lon": loc["lon"],
                  "icao": ic, "stn_name": (stn["name"].split(",")[0] if stn else ""),
-                 "is_metar": is_metar, "obs_note": obs_note, "cur_v": cur_v, "max_v": max_v,
+                 "official": official.get(norm_city(r["city"]), {}), "is_metar": is_metar, "obs_note": obs_note, "cur_v": cur_v, "max_v": max_v,
                  "met_name": met_site(r["city"], loc["country"])[0],
                  "met_url": met_site(r["city"], loc["country"])[1]})
 
@@ -630,18 +751,20 @@ with tab_t:
             "met_website": r["met_url"],
             "airport_icao": r["icao"], "airport_reading_is_metar": r["is_metar"],
             "airport_current_c": r["cur_v"], "airport_today_max_recd_c": r["max_v"],
-            "met_tomorrow_max_c": r["src"].get("Open-Meteo.com", {}).get("high_d1"),
-            "met_day_after_max_c": r["src"].get("Open-Meteo.com", {}).get("high_d2"),
+            "met_current_c": (r["official"].get("current") or (None,))[0],
+            "met_today_max_c": (r["official"].get("max_rec") or (None,))[0],
+            "met_tomorrow_max_c": (r["official"].get("high_d1") or (None,))[0],
+            "met_day_after_max_c": (r["official"].get("high_d2") or (None,))[0],
             "polymarket": re.sub("<[^>]+>", "", r["poly_html"].replace("<br>", " | ")),
             "day_end_pkt": re.sub("<[^>]+>", " ", r["day_end"])} for r in rows])
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
-    st.caption("DATA SOURCE (Met Website columns): Current aur Today Max. Recd. = us city ke Polymarket resolution airport (ICAO code city ke neeche likha hai) "
-               "ki NOAA METAR reading (aviationweather.gov feed); click par wahi METAR page khulta hai. Max. Recd. = local din ka ab tak ka maximum. "
-               "Tomorrow / Day After Tomorrow abhi record nahi hue, is liye forecast max hain: Open-Meteo 'Best match' model, airport ki coordinates par "
-               "(click par wahi Open-Meteo request khulti hai). Ye us desh ki met service ka apna data/forecast nahi hai. "
-               "METAR na mile to value ke neeche '(model)' likha aata hai. 'wunderground.com' ka apna data dashboard tak nahi aata (API key chahiye): N/A + page link.")
+    st.caption("MET WEBSITE columns: sirf us desh ki apni met service ka data (airport/city station). Helsinki: FMI (Helsinki-Vantaa airport); "
+               "Singapore: MSS/NEA (Changi station + 4-day forecast); Hong Kong: HKO (Chek Lap Kok airport current, forecast poore HK ka); "
+               "NYC aur Denver: NWS (KLGA / KBKF airport observations + NWS forecast). Click par wahi data/page khulta hai jahan se number aaya. "
+               "'Click' = us city ki met service ka data bina API key ke nahi milta (ya woh us column ke liye available nahi), click se unki website khulti hai. "
+               "Max. Recd. = local din ka ab tak ka maximum (jahan available ho). 'wunderground.com' ka apna data dashboard tak nahi aata: N/A + page link.")
 
 with tab_m:
     if rows:
