@@ -132,8 +132,6 @@ def norm_city(name: str) -> str:
 OM_SOURCES = [("Open-Meteo.com", "Best match", "best_match")]
 # Table mein dikhne wali 2 websites
 SITES = [
-    ("weather.gov/wrh/timeseries", "https://www.weather.gov/wrh/timeseries"),
-    ("aviationweather.gov", "https://aviationweather.gov/data/metar/"),
     ("wunderground.com", "https://www.wunderground.com/"),
 ]
 TITLE_RE = re.compile(r"^Highest temperature in (.+?) on (.+?)\?*$", re.I)
@@ -255,6 +253,11 @@ def fetch_polymarket() -> tuple[pd.DataFrame, str | None]:
                 continue
             city = m.group(1).strip()
             end = ev.get("endDate") or ""
+            try:   # khatam ho chuka (endDate guzar gaya) market chhod do: uska top outcome ~95%+ hota hai, filter fail
+                if datetime.fromisoformat(end.replace("Z", "+00:00")) <= now:
+                    continue
+            except ValueError:
+                pass
             if city in best and best[city]["end"] <= end:
                 continue
             buckets = []
@@ -445,7 +448,7 @@ def build_table(rows: list[dict]) -> str:
     r2 += "".join(
         th(f'<a href="{url}" target="_blank" rel="noopener" style="color:#0b3d91">{html.escape(nm)}</a><br>'
            f'<span style="font-weight:400;font-size:11px">'
-           f'{"(apna data nahi: sirf link)" if nm == "wunderground.com" else "(obs: airport METAR · fcst: Open-Meteo)"}</span>',
+           f'(apna data nahi: sirf link)</span>',
            sticky(1) + f"height:{ROW_H[1]}px;", colspan=4)
         for nm, url in SITES)
     h.append(f"<tr>{r2}</tr>")
@@ -476,9 +479,7 @@ def build_table(rows: list[dict]) -> str:
         ]
         om = r["src"].get("Open-Meteo.com", {})
         metar_url = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
-        timeseries_url = f"https://www.weather.gov/wrh/timeseries?site={r['icao'].lower()}"
         wunderground_url = f"https://www.wunderground.com/history/daily/{r['icao']}"
-        site_urls = [timeseries_url, metar_url, wunderground_url]
 
         def observed(val, url, note):
             """Airport METAR reading; METAR na mile to model value + '(model)'."""
@@ -493,34 +494,20 @@ def build_table(rows: list[dict]) -> str:
                 cell = observed(r["cur_v"] if k == "current" else r["max_v"], metar_url,
                                 f"{r['icao']} airport METAR (NOAA) - last obs {r['obs_note']}")
             else:
-                cell = temp_cell(om.get(k), r["met_url"], f"{r['met_name']} (national met service) - click to open")
+                cell = temp_cell(om.get(k), source_url(r["lat"], r["lon"], "best_match"),
+                                 "Forecast max: Open-Meteo Best match model, airport coordinates (met service ka apna forecast nahi)")
             cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
             bg = f"background:{MET_CUR_BG};font-weight:600;" if k == "current" else row_bg
             cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
 
-        # 2 websites: Current + Max. Recd. (same airport METAR, link to each site's page)
+        # wunderground.com: apna data hamare paas nahi -> N/A + station page ka link
         for si, (nm, _home) in enumerate(SITES):
-            url = site_urls[si]
-            if nm == "wunderground.com":   # Wunderground ka apna data hamare paas nahi: N/A + station page ka link
-                na = (f'<a style="color:#0b3d91" href="{html.escape(url)}" target="_blank" rel="noopener" '
-                      f'title="Weather Underground page kholein (data dashboard tak nahi aata)">N/A</a>'
-                      f'<br><span style="font-size:10px;color:#555">(page kholein)</span>')
-                for k in ("current", "max_rec", "high_d1", "high_d2"):
-                    bg = f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg
-                    cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{na}</td>')
-                continue
-            for k in ("current", "max_rec"):
-                cell = observed(r["cur_v"] if k == "current" else r["max_v"], url,
-                                f"{r['icao']} - {nm} (METAR value, last obs {r['obs_note']})")
-                cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
+            na = (f'<a style="color:#0b3d91" href="{html.escape(wunderground_url)}" target="_blank" rel="noopener" '
+                  f'title="Weather Underground page kholein (data dashboard tak nahi aata)">N/A</a>'
+                  f'<br><span style="font-size:10px;color:#555">(page kholein)</span>')
+            for k in ("current", "max_rec", "high_d1", "high_d2"):
                 bg = f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg
-                cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
-            # Tomorrow / Day After: ye sites forecast nahi deti -> Open-Meteo forecast (airport ki coordinates par)
-            fc_url = source_url(r["lat"], r["lon"], "best_match")
-            for k in ("high_d1", "high_d2"):
-                cell = temp_cell(om.get(k), fc_url, f"Forecast max (Open-Meteo Best match, airport coordinates) - {nm} ye forecast publish nahi karta")
-                cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
-                cells.append(f'<td style="{BASE}{row_bg}white-space:nowrap;">{cell}</td>')
+                cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{na}</td>')
         h.append("<tr>" + "".join(cells) + "</tr>")
     h.append("</tbody></table></div>")
     return "".join(h)
@@ -650,14 +637,11 @@ with tab_t:
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
-    st.caption("AIRPORT DATA: har city ke saath uska Polymarket resolution airport (ICAO code) likha hai. "
-               "'weather.gov/wrh/timeseries' aur 'aviationweather.gov' columns mein us airport ki NOAA METAR reading hai (Current aur us din ka Max. Recd.); "
-               "dono ka data ek hi METAR feed (aviationweather.gov) se aata hai, is liye numbers ek jaise hain. 'weather.gov' wale number par click se "
-               "NOAA time-series page khulta hai jahan Polymarket settle karta hai (us page par chhoti extra readings ki wajah se max thoda alag ho sakta hai). "
-               "'wunderground.com' ka apna data dashboard tak nahi aata (uske liye API key chahiye), is liye us group mein N/A hai; "
-               "click par us airport ka Weather Underground page khulta hai. METAR na mile to value ke neeche '(model)' likha aata hai. "
-               "Tomorrow / Day After Tomorrow abhi record nahi hue, is liye forecast max hain (Open-Meteo Best match, airport ki coordinates par); "
-               "ye in websites ke apne forecast nahi hain. Max. Recd. = us city ke local din ka ab tak ka maximum.")
+    st.caption("DATA SOURCE (Met Website columns): Current aur Today Max. Recd. = us city ke Polymarket resolution airport (ICAO code city ke neeche likha hai) "
+               "ki NOAA METAR reading (aviationweather.gov feed); click par wahi METAR page khulta hai. Max. Recd. = local din ka ab tak ka maximum. "
+               "Tomorrow / Day After Tomorrow abhi record nahi hue, is liye forecast max hain: Open-Meteo 'Best match' model, airport ki coordinates par "
+               "(click par wahi Open-Meteo request khulti hai). Ye us desh ki met service ka apna data/forecast nahi hai. "
+               "METAR na mile to value ke neeche '(model)' likha aata hai. 'wunderground.com' ka apna data dashboard tak nahi aata (API key chahiye): N/A + page link.")
 
 with tab_m:
     if rows:
