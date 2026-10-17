@@ -398,7 +398,7 @@ MET_CUR_BG = "#ffe8cc"  # light orange for Met Website "Current"
 FROZEN_W = [46, 150, 95, 115]
 FROZEN_L = [0, 46, 196, 291]
 # Header rows: heights in px, sticky top offsets are cumulative
-ROW_H = [36, 54, 40]
+ROW_H = [36, 54, 58]
 ROW_T = [0, 36, 90]
 
 BASE = ("box-sizing:border-box;border-right:1px solid #b8bec6;border-bottom:1px solid #b8bec6;"
@@ -415,7 +415,7 @@ def _frozen_style(i: int, header: bool) -> str:
 
 
 def build_table(rows: list[dict]) -> str:
-    total_w = sum(FROZEN_W) + 4 * 105 + len(SITES) * 2 * 100
+    total_w = sum(FROZEN_W) + 4 * 105 + len(SITES) * 4 * 100
     h = [f'<div style="overflow:auto;max-height:78vh;border:1px solid #b8bec6;border-radius:4px;background:#fff">'
          f'<table style="border-collapse:separate;border-spacing:0;min-width:{total_w}px;width:100%">']
     h.append("<thead>")
@@ -431,7 +431,7 @@ def build_table(rows: list[dict]) -> str:
         th(t, _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=3)
         for i, t in enumerate(["Sr.", "City with Country", "Day End Time<br>(PKT)", "Poly Market"]))
     r1 += th("Met Website", sticky(0) + f"height:{ROW_H[0]}px;", colspan=4)
-    r1 += th("Temperature °C &amp; °F", sticky(0) + f"height:{ROW_H[0]}px;", colspan=len(SITES) * 2)
+    r1 += th("Temperature °C &amp; °F", sticky(0) + f"height:{ROW_H[0]}px;", colspan=len(SITES) * 4)
     h.append(f"<tr>{r1}</tr>")
 
     # Row 2: Met Website sub-headers (span rows 2-3) + the 2 site names
@@ -443,8 +443,8 @@ def build_table(rows: list[dict]) -> str:
                                "Day After<br>Tomorrow<br>Max. Recd. Temp.")))
     r2 += "".join(
         th(f'<a href="{url}" target="_blank" rel="noopener" style="color:#0b3d91">{html.escape(nm)}</a><br>'
-           f'<span style="font-weight:400;font-size:11px">(airport METAR)</span>',
-           sticky(1) + f"height:{ROW_H[1]}px;", colspan=2)
+           f'<span style="font-weight:400;font-size:11px">(obs: airport METAR · fcst: Open-Meteo)</span>',
+           sticky(1) + f"height:{ROW_H[1]}px;", colspan=4)
         for nm, url in SITES)
     h.append(f"<tr>{r2}</tr>")
 
@@ -453,6 +453,8 @@ def build_table(rows: list[dict]) -> str:
     for i, _ in enumerate(SITES):
         r3 += th("Current", sticky(2) + f"height:{ROW_H[2]}px;width:100px;min-width:100px;background:{CUR_BG[i % len(CUR_BG)]};")
         r3 += th("Max. Recd.", sticky(2) + f"height:{ROW_H[2]}px;width:100px;min-width:100px;")
+        r3 += th("Tomorrow<br>Max. Recd.<br>Temp.", sticky(2) + f"height:{ROW_H[2]}px;width:100px;min-width:100px;")
+        r3 += th("Day After<br>Tomorrow<br>Max. Recd. Temp.", sticky(2) + f"height:{ROW_H[2]}px;width:110px;min-width:110px;")
     h.append(f"<tr>{r3}</tr>")
     h.append("</thead><tbody>")
 
@@ -501,6 +503,12 @@ def build_table(rows: list[dict]) -> str:
                 cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
                 bg = f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg
                 cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
+            # Tomorrow / Day After: ye sites forecast nahi deti -> Open-Meteo forecast (airport ki coordinates par)
+            fc_url = source_url(r["lat"], r["lon"], "best_match")
+            for k in ("high_d1", "high_d2"):
+                cell = temp_cell(om.get(k), fc_url, f"Forecast max (Open-Meteo Best match, airport coordinates) - {nm} ye forecast publish nahi karta")
+                cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
+                cells.append(f'<td style="{BASE}{row_bg}white-space:nowrap;">{cell}</td>')
         h.append("<tr>" + "".join(cells) + "</tr>")
     h.append("</tbody></table></div>")
     return "".join(h)
@@ -635,8 +643,10 @@ with tab_t:
                "(Current aur us din ka Max. Recd.). Dono ka data ek hi METAR feed (aviationweather.gov) se aata hai, is liye numbers ek jaise hain; "
                "'weather.gov/wrh/timeseries' wale numbers par click karne se woh NOAA time-series page khulta hai jahan Polymarket settle karta hai "
                "(us page par chhoti extra readings ki wajah se max thoda alag ho sakta hai). METAR na mile to value ke neeche '(model)' likha aata hai. "
-               "Met Website ke Tomorrow / Day After forecast hain (Open-Meteo Best match, airport ki coordinates par); click par us country ki "
-               "national met website khulti hai. Max. Recd. = us city ke local din ka ab tak ka maximum.")
+               "Tomorrow / Day After Tomorrow columns (Met Website ke neeche aur dono websites ke neeche) abhi record nahi hue, is liye forecast max hain "
+               "(Open-Meteo Best match, airport ki coordinates par). Ye 'weather.gov' ya 'aviationweather.gov' ke publish kiye hue forecast nahi hain; "
+               "websites wale forecast cells par click karne se Open-Meteo API page khulta hai, aur Met Website wale par us country ki national met website. "
+               "Max. Recd. = us city ke local din ka ab tak ka maximum.")
 
 with tab_m:
     if rows:
