@@ -444,7 +444,8 @@ def build_table(rows: list[dict]) -> str:
                                "Day After<br>Tomorrow<br>Max. Recd. Temp.")))
     r2 += "".join(
         th(f'<a href="{url}" target="_blank" rel="noopener" style="color:#0b3d91">{html.escape(nm)}</a><br>'
-           f'<span style="font-weight:400;font-size:11px">(obs: airport METAR · fcst: Open-Meteo)</span>',
+           f'<span style="font-weight:400;font-size:11px">'
+           f'{"(apna data nahi: sirf link)" if nm == "wunderground.com" else "(obs: airport METAR · fcst: Open-Meteo)"}</span>',
            sticky(1) + f"height:{ROW_H[1]}px;", colspan=4)
         for nm, url in SITES)
     h.append(f"<tr>{r2}</tr>")
@@ -500,6 +501,14 @@ def build_table(rows: list[dict]) -> str:
         # 2 websites: Current + Max. Recd. (same airport METAR, link to each site's page)
         for si, (nm, _home) in enumerate(SITES):
             url = site_urls[si]
+            if nm == "wunderground.com":   # Wunderground ka apna data hamare paas nahi: N/A + station page ka link
+                na = (f'<a style="color:#0b3d91" href="{html.escape(url)}" target="_blank" rel="noopener" '
+                      f'title="Weather Underground page kholein (data dashboard tak nahi aata)">N/A</a>'
+                      f'<br><span style="font-size:10px;color:#555">(page kholein)</span>')
+                for k in ("current", "max_rec", "high_d1", "high_d2"):
+                    bg = f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg
+                    cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{na}</td>')
+                continue
             for k in ("current", "max_rec"):
                 cell = observed(r["cur_v"] if k == "current" else r["max_v"], url,
                                 f"{r['icao']} - {nm} (METAR value, last obs {r['obs_note']})")
@@ -642,15 +651,13 @@ with tab_t:
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
     st.caption("AIRPORT DATA: har city ke saath uska Polymarket resolution airport (ICAO code) likha hai. "
-               "'weather.gov/wrh/timeseries', 'aviationweather.gov' aur 'wunderground.com' teeno columns mein us airport ki NOAA METAR reading hai "
-               "(Current aur us din ka Max. Recd.). Teeno ka data ek hi METAR feed (aviationweather.gov) se aata hai, is liye numbers ek jaise hain "
-               "(wunderground.com par click se us airport station ka Weather Underground history page khulta hai; us site ke apne numbers maine nahi parhe); "
-               "'weather.gov/wrh/timeseries' wale numbers par click karne se woh NOAA time-series page khulta hai jahan Polymarket settle karta hai "
-               "(us page par chhoti extra readings ki wajah se max thoda alag ho sakta hai). METAR na mile to value ke neeche '(model)' likha aata hai. "
-               "Tomorrow / Day After Tomorrow columns (Met Website ke neeche aur dono websites ke neeche) abhi record nahi hue, is liye forecast max hain "
-               "(Open-Meteo Best match, airport ki coordinates par). Ye 'weather.gov' ya 'aviationweather.gov' ke publish kiye hue forecast nahi hain; "
-               "websites wale forecast cells par click karne se Open-Meteo API page khulta hai, aur Met Website wale par us country ki national met website. "
-               "Max. Recd. = us city ke local din ka ab tak ka maximum.")
+               "'weather.gov/wrh/timeseries' aur 'aviationweather.gov' columns mein us airport ki NOAA METAR reading hai (Current aur us din ka Max. Recd.); "
+               "dono ka data ek hi METAR feed (aviationweather.gov) se aata hai, is liye numbers ek jaise hain. 'weather.gov' wale number par click se "
+               "NOAA time-series page khulta hai jahan Polymarket settle karta hai (us page par chhoti extra readings ki wajah se max thoda alag ho sakta hai). "
+               "'wunderground.com' ka apna data dashboard tak nahi aata (uske liye API key chahiye), is liye us group mein N/A hai; "
+               "click par us airport ka Weather Underground page khulta hai. METAR na mile to value ke neeche '(model)' likha aata hai. "
+               "Tomorrow / Day After Tomorrow abhi record nahi hue, is liye forecast max hain (Open-Meteo Best match, airport ki coordinates par); "
+               "ye in websites ke apne forecast nahi hain. Max. Recd. = us city ke local din ka ab tak ka maximum.")
 
 with tab_m:
     if rows:
