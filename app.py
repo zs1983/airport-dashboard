@@ -55,7 +55,7 @@ MET_BY_CITY = {
     "denver": ("NWS Boulder", "https://www.weather.gov/bou/"),
     "hong kong": ("Hong Kong Observatory", "https://www.hko.gov.hk/en/index.html"),
     "wellington": ("MetService", "https://www.metservice.com/"),
-    "munich": ("DWD", "https://www.dwd.de/EN/Home/home_node.html"),
+    "munich": ("DWD", "https://www.dwd.de/EN/weather/weather_climate_local/bavaria/munic/_node.html"),
     "shanghai": ("CMA", "https://english.cma.gov.cn/"),
     "beijing": ("CMA", "https://english.cma.gov.cn/"),
     "moscow": ("Hydrometcenter", "https://meteoinfo.ru/en/"),
@@ -324,6 +324,8 @@ OFFICIAL = {   # city -> (kind, local tz, extra)
     "singapore": ("sg", "Asia/Singapore", {"stn": "Changi (MSS/NEA)"}),
     "hong kong": ("hko", "Asia/Hong_Kong", {"stn": "Chek Lap Kok - HK airport (HKO)"}),
     "nyc": ("nws", "America/New_York", {"icao": "KLGA", "lat": 40.7769, "lon": -73.8740, "stn": "LaGuardia KLGA (NWS)"}),
+    "munich": ("dwd", "Europe/Berlin", {"stn": "Munich Airport 10870 (DWD)",
+                                        "url": "https://opendata.dwd.de/weather/weather_reports/poi/10870-BEOB.csv"}),
     "denver": ("nws", "America/Denver", {"icao": "KBKF", "lat": 39.7017, "lon": -104.7517, "stn": "Buckley KBKF (NWS)"}),
 }
 
@@ -354,6 +356,26 @@ def _official_one(kind: str, tzname: str, x: dict) -> dict:
             u = _prep_url(FMI_URL, prm)
             out["current"] = (vals[-1][1], u, f"{x['stn']} - last obs {vals[-1][0]}")
             out["max_rec"] = (max(v for _, v in vals), u, f"{x['stn']} - max since local midnight")
+    elif kind == "dwd":
+        r = get_retry(x["url"], None)
+        lines = r.content.decode("utf-8", errors="replace").splitlines()
+        col = lines[0].split(";").index("dry_bulb_temperature_at_2_meter_above_ground")
+        obs = []
+        for ln in lines[3:]:   # line 2 = units, line 3 = German names
+            f = ln.split(";")
+            if len(f) <= col or f[col].strip() in ("", "---"):
+                continue
+            try:
+                t = datetime.strptime(f[0] + " " + f[1], "%d.%m.%y %H:%M").replace(tzinfo=timezone.utc)
+                obs.append((t, float(f[col].replace(",", "."))))
+            except ValueError:
+                continue
+        obs.sort()
+        if obs:
+            out["current"] = (obs[-1][1], x["url"], f"{x['stn']} - last obs {obs[-1][0].astimezone(PKT).strftime('%d %b %I:%M %p PKT')}")
+            today = [v for t, v in obs if t.astimezone(zi).date() == d0]
+            if today:
+                out["max_rec"] = (max(today), x["url"], f"{x['stn']} - max of hourly obs since local midnight")
     elif kind == "sg":
         prm = {"date": d0.isoformat()}
         r = get_retry(SG_TEMP_URL, prm)
@@ -760,7 +782,7 @@ with tab_t:
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
-    st.caption("MET WEBSITE columns: sirf us desh ki apni met service ka data (airport/city station). Helsinki: FMI (Helsinki-Vantaa airport); "
+    st.caption("MET WEBSITE columns: sirf us desh ki apni met service ka data (airport/city station). Helsinki: FMI (Helsinki-Vantaa airport); Munich: DWD (Munich Airport station, Current + Max; forecast ke liye Click); "
                "Singapore: MSS/NEA (Changi station + 4-day forecast); Hong Kong: HKO (Chek Lap Kok airport current, forecast poore HK ka); "
                "NYC aur Denver: NWS (KLGA / KBKF airport observations + NWS forecast). Click par wahi data/page khulta hai jahan se number aaya. "
                "'Click' = us city ki met service ka data bina API key ke nahi milta (ya woh us column ke liye available nahi), click se unki website khulti hai. "
