@@ -11,7 +11,6 @@ import html
 import json
 import re
 import time
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -34,21 +33,7 @@ PKT = ZoneInfo("Asia/Karachi")
 # Agar yahan cities likh dein to dashboard hamesha shuru se sirf inhi ko dikhayega.
 # Khali [] ka matlab: sidebar se choose karein (ya filter ke hisab se sab).
 # Misal: DEFAULT_CITIES = ["London", "Karachi", "Seoul"]
-DEFAULT_CITIES: list[str] = [
-    "London", "Paris", "Wellington", "Munich", "Tokyo", "Hong Kong", "Shanghai",
-    "Singapore", "Beijing", "Moscow", "Amsterdam", "Helsinki", "NYC", "Denver",
-    "Sao Paulo", "Buenos Aires",
-]
-
-# Alag spelling wale naam ek jaise samjhe jayen (accents aur case ignore hote hain)
-CITY_ALIASES = {"new york": "nyc", "new york city": "nyc", "sao paulo": "sao paulo"}
-# Location dhoondne ke liye (geocoding) behtar naam
-GEO_ALIASES = {"NYC": "New York", "nyc": "New York"}
-
-
-def norm_city(name: str) -> str:
-    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower().strip()
-    return CITY_ALIASES.get(n, n)
+DEFAULT_CITIES: list[str] = []
 
 # Column group -> Open-Meteo model.  These are the *models* closest to each
 # site's data source; they are NOT the sites' own published numbers.
@@ -141,7 +126,6 @@ def load_airports(path: str = "airports.csv") -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def locate(city: str) -> dict | None:
     """City -> {country, lat, lon}. airports.csv first, then Open-Meteo geocoding."""
-    city = GEO_ALIASES.get(city, city)
     ap = load_airports()
     m = ap[ap["city"].str.lower() == city.lower()]
     if not m.empty:
@@ -399,7 +383,7 @@ if poly.empty:
 city_options = sorted(poly["city"].unique())
 picked = st.sidebar.multiselect(
     "Cities select karein", city_options,
-    default=[c for c in city_options if norm_city(c) in {norm_city(x) for x in DEFAULT_CITIES}],
+    default=[c for c in DEFAULT_CITIES if c in city_options],
     help="Jo cities yahan choose karenge sirf unka data dikhega (percentage filter ke bina). "
          "Khali chhodein to upar wale % filter ke hisab se cities dikhengi.")
 
