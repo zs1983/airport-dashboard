@@ -624,6 +624,36 @@ HUMAN_LINK = {
     "hong kong": "https://www.hko.gov.hk/en/index.html",
     "munich": "https://www.dwd.de/EN/weather/weather_climate_local/bavaria/munic/_node.html",
 }
+# Har city ka us desh ki met website par apna page (jahan tak link pakka hai); baqi LIST_LINKS (homepage) par
+MET_PAGE = {
+    "london": "https://weather.metoffice.gov.uk/forecast/gcpvj0v07",
+    "paris": "https://meteofrance.com/previsions-meteo-france/paris/75000",
+    "madrid": "https://www.aemet.es/en/eltiempo/prediccion/municipios/madrid-id28079",
+    "ankara": "https://www.mgm.gov.tr/eng/forecast-cities.aspx?m=ANKARA",
+    "toronto": "https://weather.gc.ca/city/pages/on-143_metric_e.html",
+    "sydney": "http://www.bom.gov.au/places/nsw/sydney/",
+    "melbourne": "http://www.bom.gov.au/places/vic/melbourne/",
+    "wellington": "https://www.metservice.com/towns-cities/locations/wellington",
+    "beijing": "https://weather.cma.cn/web/weather/54511.html",
+    "shanghai": "https://www.wunderground.com/history/daily/ZSPD",
+    "tokyo": "https://www.jma.go.jp/bosai/forecast/#area_type=offices&area_code=130000",
+    "amsterdam": "https://www.knmi.nl/nederland-nu/weer/waarnemingen",
+    "hong kong": "https://www.hko.gov.hk/en/wxinfo/ts/text_readings.htm",
+    "helsinki": "https://en.ilmatieteenlaitos.fi/latest-observations",
+}
+
+
+def met_page(city: str, icao: str, fallback: str) -> str:
+    c = norm_city(city)
+    if c in HUMAN_LINK:
+        return HUMAN_LINK[c]
+    if c in MET_PAGE:
+        return MET_PAGE[c]
+    if icao and (icao[0] == "K" or icao.startswith("PH")) and c in LIST_LINKS and LIST_LINKS[c] == "https://www.weather.gov":
+        return f"https://www.weather.gov/wrh/timeseries?site={icao}"
+    return LIST_LINKS.get(c, fallback)
+
+
 VW_CC = {   # vweatherstation.com/weather/{country}/{city}/
     "london": "gb", "paris": "fr", "tokyo": "jp", "seoul": "kr", "beijing": "cn", "shanghai": "cn", "munich": "de",
     "amsterdam": "nl", "madrid": "es", "rome": "it", "stockholm": "se", "ankara": "tr", "toronto": "ca", "sao paulo": "br",
@@ -702,17 +732,19 @@ def build_table(rows: list[dict]) -> str:
         tag = lambda t: f'<br><span style="font-size:10px;font-weight:400;color:#555">({t})</span>'
         om = r["src"].get("Open-Meteo.com", {})
         ec = r["src"].get("ECMWF", {})
-        list_url = LIST_LINKS.get(norm_city(r["city"]), r["met_url"])
+        list_url = met_page(r["city"], r["icao"], r["met_url"])
+        metar_page = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
 
         # 1) Met Website: us desh ki met service ka data jahan free API hai; warna airport METAR (obs) / Open-Meteo (forecast), label ke saath
         off = r["official"]
         for k in KEYS:
             if k in off:
                 val, url, note = off[k]
-                add(k, temp_cell(val, HUMAN_LINK.get(norm_city(r["city"]), url), note + " (click: met service ki website)"), GROUPS[0][2])
+                add(k, temp_cell(val, url if url.startswith("https://www.weather.gov") or url.startswith("https://forecast.weather.gov") else list_url,
+                                 note + " (click: us airport/city ka met service page)"), GROUPS[0][2])
             elif k in ("current", "max_rec") and r["is_metar"]:
                 v = r["cur_v"] if k == "current" else r["max_v"]
-                add(k, temp_cell(v, list_url, f"Data: {r['icao']} airport METAR (NOAA), {r['met_name']} ka apna data nahi. Click: {r['met_name']} website") + tag("METAR"), GROUPS[0][2])
+                add(k, temp_cell(v, metar_page, f"Data: {r['icao']} airport METAR (NOAA), {r['met_name']} ka apna data nahi. Click: us airport ki METAR (aviationweather.gov)") + tag("METAR"), GROUPS[0][2])
             else:
                 add(k, temp_cell(om.get(k), list_url, f"Data: Open-Meteo model, {r['met_name']} ka apna data nahi. Click: {r['met_name']} website") + tag("model"), GROUPS[0][2])
 
