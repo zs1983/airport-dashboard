@@ -37,20 +37,47 @@ PKT = ZoneInfo("Asia/Karachi")
 # Khali [] ka matlab: sidebar se choose karein (ya filter ke hisab se sab).
 # Misal: DEFAULT_CITIES = ["London", "Karachi", "Seoul"]
 DEFAULT_CITIES: list[str] = [
-    "London", "Paris", "Wellington", "Munich", "Tokyo", "Hong Kong", "Shanghai",
-    "Singapore", "Beijing", "Moscow", "Amsterdam", "Helsinki", "NYC", "Denver",
-    "Sao Paulo", "Buenos Aires",
+    "New York", "Chicago", "Miami", "Dallas", "Seattle", "Atlanta", "Los Angeles", "Denver", "Phoenix", "Houston",
+    "Boston", "Washington D.C.", "Las Vegas", "San Francisco", "Minneapolis", "Detroit", "Philadelphia", "San Diego",
+    "Austin", "Charlotte", "London", "Paris", "Tokyo", "Seoul", "Beijing", "Shanghai", "Munich", "Amsterdam", "Madrid",
+    "Rome", "Stockholm", "Ankara", "Toronto", "Sao Paulo", "Singapore", "Lucknow", "Mumbai", "Dubai", "Tel Aviv",
+    "Bangkok", "Jakarta", "Cairo", "Mexico City", "Buenos Aires", "Bogota", "Santiago", "Sydney", "Melbourne",
+    "Wellington", "Johannesburg", "Honolulu",
 ]
 
+# Aap ki list ke links (har city ki apni website). Data na mile to "Click" isi link par le jata hai.
+LIST_LINKS = {
+    **{c: "https://www.weather.gov" for c in (
+        "nyc", "chicago", "miami", "dallas", "seattle", "atlanta", "los angeles", "denver", "phoenix", "houston",
+        "boston", "washington dc", "las vegas", "san francisco", "minneapolis", "detroit", "philadelphia",
+        "san diego", "austin", "charlotte", "honolulu")},
+    "london": "https://www.metoffice.gov.uk", "paris": "https://meteofrance.com", "tokyo": "https://www.jma.go.jp",
+    "seoul": "https://www.weather.go.kr", "beijing": "https://www.cma.gov.cn", "shanghai": "https://www.wunderground.com",
+    "munich": "https://www.dwd.de", "amsterdam": "https://www.knmi.nl", "madrid": "https://www.aemet.es",
+    "rome": "https://www.meteoam.it", "stockholm": "https://www.smhi.se", "ankara": "https://www.mgm.gov.tr",
+    "toronto": "https://weather.gc.ca", "sao paulo": "https://portal.inmet.gov.br", "singapore": "https://www.weather.gov.sg",
+    "lucknow": "https://mausam.imd.gov.in", "mumbai": "https://mausam.imd.gov.in", "dubai": "https://www.ncm.ae",
+    "tel aviv": "https://ims.gov.il", "bangkok": "https://www.tmd.go.th", "jakarta": "https://www.bmkg.go.id",
+    "cairo": "https://www.ema.gov.eg", "mexico city": "https://smn.conagua.gob.mx", "buenos aires": "https://www.smn.gob.ar",
+    "bogota": "http://www.ideam.gov.co", "santiago": "https://meteochile.gob.cl", "sydney": "http://www.bom.gov.au",
+    "melbourne": "http://www.bom.gov.au", "wellington": "https://www.metservice.com", "johannesburg": "https://www.weathersa.co.za",
+}
+
 # Alag spelling wale naam ek jaise samjhe jayen (accents aur case ignore hote hain)
-CITY_ALIASES = {"new york": "nyc", "new york city": "nyc", "sao paulo": "sao paulo"}
+CITY_ALIASES = {"new york": "nyc", "new york city": "nyc", "sao paulo": "sao paulo",
+                "washington d.c.": "washington dc", "washington, d.c.": "washington dc", "washington": "washington dc",
+                "washington, dc": "washington dc"}
 # Location dhoondne ke liye (geocoding) behtar naam
-GEO_ALIASES = {"NYC": "New York", "nyc": "New York"}
+GEO_ALIASES = {"NYC": "New York", "nyc": "New York", "Washington DC": "Washington", "Washington D.C.": "Washington"}
 
 
 # Har country/city ki national met (weather) service ki website. Naya add karna ho to bas ek line.
 # City-specific override pehle check hota hai, phir country, aur phir WMO ka fallback.
 MET_BY_CITY = {
+    **{c: ("NWS", "https://www.weather.gov") for c in (
+        "chicago", "miami", "dallas", "seattle", "atlanta", "los angeles", "phoenix", "houston", "boston",
+        "washington dc", "las vegas", "san francisco", "minneapolis", "detroit", "philadelphia", "san diego",
+        "austin", "charlotte", "honolulu")},
     "nyc": ("NWS New York", "https://www.weather.gov/okx/"),
     "denver": ("NWS Boulder", "https://www.weather.gov/bou/"),
     "hong kong": ("Hong Kong Observatory", "https://www.hko.gov.hk/en/index.html"),
@@ -120,6 +147,13 @@ FALLBACK_ICAO = {
     "hong kong": "VHHH", "shanghai": "ZSPD", "singapore": "WSSS", "beijing": "ZBAA",
     "moscow": "UUWW", "amsterdam": "EHAM", "helsinki": "EFHK", "nyc": "KLGA",
     "denver": "KBKF", "sao paulo": "SBGR", "buenos aires": "SAEZ",
+    "chicago": "KORD", "miami": "KMIA", "dallas": "KDAL", "seattle": "KSEA", "atlanta": "KATL", "los angeles": "KLAX",
+    "phoenix": "KPHX", "houston": "KHOU", "boston": "KBOS", "washington dc": "KDCA", "las vegas": "KLAS",
+    "san francisco": "KSFO", "minneapolis": "KMSP", "detroit": "KDTW", "philadelphia": "KPHL", "san diego": "KSAN",
+    "austin": "KAUS", "charlotte": "KCLT", "honolulu": "PHNL", "seoul": "RKSI", "madrid": "LEMD", "rome": "LIRF",
+    "stockholm": "ESSA", "ankara": "LTAC", "toronto": "CYYZ", "lucknow": "VILK", "mumbai": "VABB", "dubai": "OMDB",
+    "tel aviv": "LLBG", "bangkok": "VTBS", "jakarta": "WIII", "cairo": "HECA", "mexico city": "MMMX",
+    "bogota": "SKBO", "santiago": "SCEL", "sydney": "YSSY", "melbourne": "YMML", "johannesburg": "FAOR",
 }
 STATION_RE = re.compile(r"site=([A-Za-z0-9]{4})\b")
 
@@ -131,9 +165,7 @@ def norm_city(name: str) -> str:
 # Sirf Met Website ke tomorrow / day-after forecast ke liye (Open-Meteo Best match, airport ki coordinates par).
 OM_SOURCES = [("Open-Meteo.com", "Best match", "best_match")]
 # Table mein dikhne wali 2 websites
-SITES = [
-    ("wunderground.com", "https://www.wunderground.com/"),
-]
+SITES = [("City ki met website", "")]
 TITLE_RE = re.compile(r"^Highest temperature in (.+?) on (.+?)\?*$", re.I)
 
 
@@ -328,6 +360,22 @@ OFFICIAL = {   # city -> (kind, local tz, extra)
                                         "url": "https://opendata.dwd.de/weather/weather_reports/poi/10870-BEOB.csv"}),
     "denver": ("nws", "America/Denver", {"icao": "KBKF", "lat": 39.7017, "lon": -104.7517, "stn": "Buckley KBKF (NWS)"}),
 }
+
+
+_US = {   # city -> (ICAO, lat, lon, tz)
+    "chicago": ("KORD", 41.9786, -87.9048, "America/Chicago"), "miami": ("KMIA", 25.7959, -80.2870, "America/New_York"),
+    "dallas": ("KDAL", 32.8471, -96.8518, "America/Chicago"), "seattle": ("KSEA", 47.4502, -122.3088, "America/Los_Angeles"),
+    "atlanta": ("KATL", 33.6407, -84.4277, "America/New_York"), "los angeles": ("KLAX", 33.9416, -118.4085, "America/Los_Angeles"),
+    "phoenix": ("KPHX", 33.4342, -112.0116, "America/Phoenix"), "houston": ("KHOU", 29.6454, -95.2789, "America/Chicago"),
+    "boston": ("KBOS", 42.3656, -71.0096, "America/New_York"), "washington dc": ("KDCA", 38.8512, -77.0402, "America/New_York"),
+    "las vegas": ("KLAS", 36.0840, -115.1537, "America/Los_Angeles"), "san francisco": ("KSFO", 37.6213, -122.3790, "America/Los_Angeles"),
+    "minneapolis": ("KMSP", 44.8848, -93.2223, "America/Chicago"), "detroit": ("KDTW", 42.2162, -83.3554, "America/Detroit"),
+    "philadelphia": ("KPHL", 39.8744, -75.2424, "America/New_York"), "san diego": ("KSAN", 32.7338, -117.1933, "America/Los_Angeles"),
+    "austin": ("KAUS", 30.1945, -97.6699, "America/Chicago"), "charlotte": ("KCLT", 35.2140, -80.9431, "America/New_York"),
+    "honolulu": ("PHNL", 21.3187, -157.9225, "Pacific/Honolulu"),
+}
+for _c, (_i, _la, _lo, _tz) in _US.items():
+    OFFICIAL[_c] = ("nws", _tz, {"icao": _i, "lat": _la, "lon": _lo, "stn": f"{_i} airport (NWS)"})
 
 
 def _prep_url(url, params):
@@ -594,12 +642,8 @@ def build_table(rows: list[dict]) -> str:
               f"{'background:' + MET_CUR_BG + ';' if i == 0 else ''}", rowspan=2)
         for i, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
                                "Day After<br>Tomorrow<br>Max. Recd. Temp.")))
-    r2 += "".join(
-        th(f'<a href="{url}" target="_blank" rel="noopener" style="color:#0b3d91">{html.escape(nm)}</a><br>'
-           f'<span style="font-weight:400;font-size:11px">'
-           f'(apna data nahi: sirf link)</span>',
-           sticky(1) + f"height:{ROW_H[1]}px;", colspan=4)
-        for nm, url in SITES)
+    r2 += th('City ki met website<br><span style="font-weight:400;font-size:11px">(aapki list ka link)</span>',
+             sticky(1) + f"height:{ROW_H[1]}px;", colspan=4)
     h.append(f"<tr>{r2}</tr>")
 
     # Row 3: Current / Max. Recd. under each website
@@ -627,7 +671,6 @@ def build_table(rows: list[dict]) -> str:
             fz(3, f'<a href="{html.escape(r["link"])}" target="_blank" rel="noopener" style="color:#0b3d91">{r["poly_html"]}</a>', True),
         ]
         metar_url = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
-        wunderground_url = f"https://www.wunderground.com/history/daily/{r['icao']}"
 
         # Met Website: us desh ki met service ka airport data; na mile to "Click" (met service ka page)
         off = r["official"]
@@ -642,14 +685,18 @@ def build_table(rows: list[dict]) -> str:
             bg = f"background:{MET_CUR_BG};font-weight:600;" if k == "current" else row_bg
             cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
 
-        # wunderground.com: apna data hamare paas nahi -> N/A + station page ka link
-        for si, (nm, _home) in enumerate(SITES):
-            na = (f'<a style="color:#0b3d91" href="{html.escape(wunderground_url)}" target="_blank" rel="noopener" '
-                  f'title="Weather Underground page kholein (data dashboard tak nahi aata)">N/A</a>'
-                  f'<br><span style="font-size:10px;color:#555">(page kholein)</span>')
-            for k in ("current", "max_rec", "high_d1", "high_d2"):
-                bg = f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg
-                cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{na}</td>')
+        # "Temperature C & F" group: aapki list ke link se; data na mile to "Click" us link par
+        list_url = LIST_LINKS.get(norm_city(r["city"]), r["met_url"])
+        for k in ("current", "max_rec", "high_d1", "high_d2"):
+            if k in off:
+                val, url, note = off[k]
+                cell = temp_cell(val, url, note)
+            else:
+                cell = (f'<a href="{html.escape(list_url)}" target="_blank" rel="noopener" '
+                        f'title="Is city ka data bina API key ke nahi milta - website kholein">Click</a>')
+            cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
+            bg = f"background:{CUR_BG[0]};font-weight:600;" if k == "current" else row_bg
+            cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
         h.append("<tr>" + "".join(cells) + "</tr>")
     h.append("</tbody></table></div>")
     return "".join(h)
@@ -725,6 +772,15 @@ weather, w_err, w_stamp = fetch_weather(coords) if coords else ({}, None, None)
 if w_err:
     st.warning(w_err)
 
+def _official_for(official: dict, city: str, ic: str) -> dict:
+    """Official data tabhi jab uska station wohi airport ho jo Polymarket use karta hai (warna 'Click')."""
+    c = norm_city(city)
+    cfg = OFFICIAL.get(c)
+    if cfg and cfg[0] == "nws" and ic and ic != cfg[2]["icao"]:
+        return {}
+    return official.get(c, {})
+
+
 official = fetch_official(tuple(sorted({norm_city(r["city"]) for r, _, _, _ in chosen}))) if chosen else {}
 rows = []
 for r, loc, stn, ic in chosen:
@@ -749,7 +805,7 @@ for r, loc, stn, ic in chosen:
                  "day_end": day_end_pkt(r["end"], w["tz"]), "link": r["link"],
                  "poly_html": poly_html, "src": w["src"], "lat": loc["lat"], "lon": loc["lon"],
                  "icao": ic, "stn_name": (stn["name"].split(",")[0] if stn else ""),
-                 "official": official.get(norm_city(r["city"]), {}), "is_metar": is_metar, "obs_note": obs_note, "cur_v": cur_v, "max_v": max_v,
+                 "official": _official_for(official, r["city"], ic), "is_metar": is_metar, "obs_note": obs_note, "cur_v": cur_v, "max_v": max_v,
                  "met_name": met_site(r["city"], loc["country"])[0],
                  "met_url": met_site(r["city"], loc["country"])[1]})
 
@@ -784,9 +840,9 @@ with tab_t:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
     st.caption("MET WEBSITE columns: sirf us desh ki apni met service ka data (airport/city station). Helsinki: FMI (Helsinki-Vantaa airport); Munich: DWD (Munich Airport station, Current + Max; forecast ke liye Click); "
                "Singapore: MSS/NEA (Changi station + 4-day forecast); Hong Kong: HKO (Chek Lap Kok airport current, forecast poore HK ka); "
-               "NYC aur Denver: NWS (KLGA / KBKF airport observations + NWS forecast). Click par wahi data/page khulta hai jahan se number aaya. "
+               "US cities (NYC, Chicago, Miami, Dallas, ... Honolulu): NWS (us city ke airport ki observations + NWS forecast; tabhi jab Polymarket ka station wohi airport ho). Click par wahi data/page khulta hai jahan se number aaya. 'Temperature C & F' group mein bhi yehi data hai, aur 'Click' par aapki list ka link khulta hai. "
                "'Click' = us city ki met service ka data bina API key ke nahi milta (ya woh us column ke liye available nahi), click se unki website khulti hai. "
-               "Max. Recd. = local din ka ab tak ka maximum (jahan available ho). 'wunderground.com' ka apna data dashboard tak nahi aata: N/A + page link.")
+               "Max. Recd. = local din ka ab tak ka maximum (jahan available ho).")
 
 with tab_m:
     if rows:
