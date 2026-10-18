@@ -30,11 +30,6 @@ POLY_TTL = 10          # seconds
 WEATHER_TTL = 300      # seconds (Open-Meteo data itself updates ~every 15 min)
 PKT = ZoneInfo("Asia/Karachi")
 
-# Agar yahan cities likh dein to dashboard hamesha shuru se sirf inhi ko dikhayega.
-# Khali [] ka matlab: sidebar se choose karein (ya filter ke hisab se sab).
-# Misal: DEFAULT_CITIES = ["London", "Karachi", "Seoul"]
-DEFAULT_CITIES: list[str] = []
-
 # Column group -> Open-Meteo model.  These are the *models* closest to each
 # site's data source; they are NOT the sites' own published numbers.
 SOURCES = [
@@ -379,28 +374,17 @@ if poly.empty:
     st.info("Abhi koi Highest-temperature Polymarket market nahi mili.")
     st.stop()
 
-# City picker: sirf choose ki hui cities ka data (khali = filter ke hisab se sab)
-city_options = sorted(poly["city"].unique())
-picked = st.sidebar.multiselect(
-    "Cities select karein", city_options,
-    default=[c for c in DEFAULT_CITIES if c in city_options],
-    help="Jo cities yahan choose karenge sirf unka data dikhega (percentage filter ke bina). "
-         "Khali chhodein to upar wale % filter ke hisab se cities dikhengi.")
-
 # Filter: top-2 outcomes both inside [lo, hi]
 poly["top2"] = poly["buckets"].apply(lambda b: b[:2])
 poly["pass"] = poly["top2"].apply(lambda t: len(t) == 2 and all(lo <= p <= hi for _, p in t))
-
-def keep(r) -> bool:
-    return (r["city"] in picked) if picked else (show_all or bool(r["pass"]))
-
+sel = poly if show_all else poly[poly["pass"]]
 
 all_rows = []
 for _, r in poly.iterrows():
     loc = locate(r["city"])
     all_rows.append((r, loc))
 
-chosen = [(r, loc) for r, loc in all_rows if keep(r) and loc]
+chosen = [(r, loc) for r, loc in all_rows if (show_all or r["pass"]) and loc]
 coords = tuple(sorted({(round(loc["lat"], 4), round(loc["lon"], 4)) for _, loc in chosen}))
 weather, w_err, w_stamp = fetch_weather(coords) if coords else ({}, None, None)
 if w_err:
@@ -415,7 +399,7 @@ for r, loc in chosen:
                  "day_end": day_end_pkt(r["end"], w["tz"]), "link": r["link"],
                  "poly_html": poly_html, "src": w["src"], "lat": loc["lat"], "lon": loc["lon"]})
 
-skipped = [r["city"] for r, loc in all_rows if keep(r) and not loc]
+skipped = [r["city"] for r, loc in all_rows if (show_all or r["pass"]) and not loc]
 c1, c2, c3 = st.columns(3)
 c1.metric("Polymarket cities", len(poly))
 c2.metric(f"Filter pass ({lo}-{hi}%)", int(poly["pass"].sum()))
@@ -424,8 +408,7 @@ c3.metric("Weather fetched", w_stamp or "N/A")
 tab_t, tab_m, tab_p = st.tabs(["📋 Table", "🗺️ Map", "📈 All Polymarket cities"])
 with tab_t:
     if not rows:
-        st.info("Choose ki hui cities ka market abhi nahi mila." if picked else
-                f"Abhi koi city nahi jis ke top 2 outcomes {lo}% se {hi}% ke beech hon.")
+        st.info(f"Abhi koi city nahi jis ke top 2 outcomes {lo}% se {hi}% ke beech hon.")
     else:
         st.html(build_table(rows))
         flat = pd.DataFrame([{
