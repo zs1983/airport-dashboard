@@ -668,7 +668,7 @@ def build_table(rows: list[dict]) -> str:
 
     # Row 1: 4 frozen rowspan headers + group header
     r1 = "".join(
-        th(t, _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=4)
+        th(t, _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=3)
         for i, t in enumerate(["Sr.", "City with Country", "Day End Time<br>(PKT)", "Poly Market"]))
     r1 += th("Met Website", f"position:sticky;top:0;z-index:5;height:{ROW_H[0]}px;", colspan=4)
     r1 += th("Temperature °C &amp; °F",
@@ -678,7 +678,7 @@ def build_table(rows: list[dict]) -> str:
     # Row 2: Met Website sub-headers (rowspan 3) + site names
     r2 = "".join(
         th(t, f"position:sticky;top:{ROW_T[1]}px;z-index:4;height:{ROW_H[1] + ROW_H[2] + ROW_H[3]}px;width:105px;min-width:105px;"
-              f"{'background:#ffe8cc;' if i == 0 else ''}", rowspan=3)
+              f"{'background:#ffe8cc;' if i == 0 else ''}", rowspan=2)
         for i, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
                                "Day After<br>Tomorrow<br>Max. Recd. Temp.")))
     r2 += "".join(
@@ -690,25 +690,14 @@ def build_table(rows: list[dict]) -> str:
         for nm, lbl, _ in SOURCES)
     h.append(f"<tr>{r2}</tr>")
 
-    # Row 3: Current / Max. Recd. / Exp. Next Day
+    # Row 3: har site ke neeche Current / Today Max / Tomorrow Max / Day After Tomorrow Max
     r3 = ""
-    for i, (nm_, _l, _m) in enumerate(SOURCES):
-        if nm_ == AVN:   # aviationweather.gov: Current / Today Max / Tomorrow Max / Day After Tomorrow Max
-            for j, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
-                                   "Day After<br>Tomorrow<br>Max. Recd. Temp.")):
-                r3 += th(t, f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;"
-                            f"{'background:' + CUR_BG[i % len(CUR_BG)] + ';' if j == 0 else ''}", rowspan=2)
-            continue
-        r3 += th("Current", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;"
-                            f"background:{CUR_BG[i % len(CUR_BG)]};", rowspan=2)
-        r3 += th("Max. Recd.", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;", rowspan=2)
-        r3 += th("Exp. Next Day", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2]}px;", colspan=2)
+    for i, _ in enumerate(SOURCES):
+        for j, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
+                               "Day After<br>Tomorrow<br>Max. Recd. Temp.")):
+            r3 += th(t, f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;width:100px;min-width:100px;"
+                        f"{'background:' + CUR_BG[i % len(CUR_BG)] + ';' if j == 0 else ''}")
     h.append(f"<tr>{r3}</tr>")
-
-    # Row 4: Min / Max
-    r4 = "".join(th(t, f"position:sticky;top:{ROW_T[3]}px;z-index:4;height:{ROW_H[3]}px;")
-                  for nm_, _l, _m in SOURCES if nm_ != AVN for t in ("Min", "Max"))
-    h.append(f"<tr>{r4}</tr>")
     h.append("</thead><tbody>")
 
     for i, r in enumerate(rows, 1):
@@ -761,7 +750,7 @@ def build_table(rows: list[dict]) -> str:
                 continue
             src = r["src"].get(name, {})
             url = source_url(r["lat"], r["lon"], model)
-            for k in ("current", "max_rec", "next_min", "next_max"):
+            for k in ("current", "max_rec", "high_d1", "high_d2"):
                 bg = (f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg)
                 cell = temp_cell(src.get(k), url).replace("<a href", '<a style="color:#0b3d91" href')
                 cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
@@ -884,7 +873,7 @@ with tab_t:
             "polymarket": re.sub("<[^>]+>", "", r["poly_html"].replace("<br>", " | ")),
             "day_end_pkt": re.sub("<[^>]+>", " ", r["day_end"]),
             **{f"{n}_{k}_c": r["src"].get(n, {}).get(k) for n, _, _ in SOURCES
-               for k in ("current", "max_rec", "next_min", "next_max")}} for r in rows])
+               for k in ("current", "max_rec", "high_d1", "high_d2")}} for r in rows])
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
@@ -896,7 +885,7 @@ with tab_t:
                "ye Windy/Weather.gov/Wunderground/Weather.com ke apne published numbers nahi hain. "
                "Har temperature par click karein to wohi Open-Meteo API page khulega jahan se number liya gaya. "
                "Header mein site ke naam par click se us site ka homepage khulta hai. "
-               "Max. Recd. = aaj ka ab tak ka model-based maximum (city ke local din ka).")
+               "Today Max. Recd. = aaj ka ab tak ka model-based maximum (city ke local din ka); Tomorrow / Day After Tomorrow = model ka forecast maximum.")
 
 with tab_m:
     if rows:
