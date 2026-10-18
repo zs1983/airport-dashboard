@@ -1,11 +1,6 @@
-"""Polymarket Temperature Dashboard (5 weather sources).
+"""Polymarket Temperature Dashboard (Met Website + 5 weather sources).
 
 Run:  pip install -r requirements.txt && streamlit run app.py
-
-Data (free, no API key):
-  - Polymarket Gamma API   -> "Highest temperature in <city> on <date>?" markets
-  - Open-Meteo forecast    -> 4 weather models (one per column group)
-  - Open-Meteo geocoding   -> lat/lon/timezone for cities not in airports.csv
 """
 import html
 import json
@@ -162,9 +157,22 @@ def norm_city(name: str) -> str:
     n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower().strip()
     return CITY_ALIASES.get(n, n)
 
-# Sirf Met Website ke tomorrow / day-after forecast ke liye (Open-Meteo Best match, airport ki coordinates par).
-OM_SOURCES = [("Open-Meteo.com", "Best match", "best_match"), ("ECMWF", "ECMWF", "ecmwf_ifs025")]
-# Table mein dikhne wali 2 websites
+# Column group -> Open-Meteo model.  These are the *models* closest to each
+# site's data source; they are NOT the sites' own published numbers.
+SOURCES = [
+    ("Windy.com", "ECMWF", "ecmwf_ifs025"),
+    ("Weather.gov", "NOAA GFS", "gfs_seamless"),
+    ("Wunderground.com", "DWD ICON", "icon_seamless"),
+    ("Weather.com", "CMA", "cma_grapes_global"),
+    ("Open-Meteo.com", "Best match", "best_match"),
+]
+SITE_HOME = {
+    "Windy.com": "https://www.windy.com/",
+    "Weather.gov": "https://www.weather.gov/",
+    "Wunderground.com": "https://www.wunderground.com/",
+    "Weather.com": "https://en.weather.com.cn/",
+    "Open-Meteo.com": "https://open-meteo.com/",
+}
 TITLE_RE = re.compile(r"^Highest temperature in (.+?) on (.+?)\?*$", re.I)
 
 
@@ -177,7 +185,7 @@ def source_url(lat, lon, model: str) -> str:
     """Exact Open-Meteo API request that the numbers in this column came from."""
     return (f"{METEO_URL}?latitude={lat}&longitude={lon}"
             f"&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min"
-            f"&models={model}&forecast_days=3&timezone=auto")
+            f"&models={model}&forecast_days=2&timezone=auto")
 
 
 def temp_cell(c, url: str = "", title: str = "Data source (Open-Meteo API)") -> str:
@@ -512,7 +520,7 @@ def fetch_official(cities: tuple) -> dict:
 def fetch_weather(coords: tuple) -> tuple[dict, str | None, str | None]:
     """coords = ((lat, lon), ...). Returns ({(lat,lon): info}, error, stamp)."""
     key = ("w", coords)
-    models = ",".join(s[2] for s in OM_SOURCES)
+    models = ",".join(s[2] for s in SOURCES)
     out, err = {}, None
     try:
         for i in range(0, len(coords), 25):
@@ -535,7 +543,7 @@ def fetch_weather(coords: tuple) -> tuple[dict, str | None, str | None]:
                 times = hourly.get("time", [])
                 dtimes = daily.get("time", [])
                 per = {}
-                for name, _lbl, model in OM_SOURCES:
+                for name, _lbl, model in SOURCES:
                     vals = hourly.get(f"temperature_2m_{model}") or hourly.get("temperature_2m") or []
                     cur, past = None, []
                     for t, v in zip(times, vals):
@@ -551,15 +559,12 @@ def fetch_weather(coords: tuple) -> tuple[dict, str | None, str | None]:
                     nxt = dtimes.index(
                         (now_local + timedelta(days=1)).strftime("%Y-%m-%d")
                     ) if (now_local + timedelta(days=1)).strftime("%Y-%m-%d") in dtimes else None
-                    def dmax(off):
-                        k = (now_local + timedelta(days=off)).strftime("%Y-%m-%d")
-                        i = dtimes.index(k) if k in dtimes else None
-                        return mx[i] if i is not None and i < len(mx) else None
-                    d0 = dmax(0)
-                    if past:  # today's highest = max(forecast daily max, already recorded)
-                        d0 = max(past) if d0 is None else max(d0, max(past))
+                    def dmax(off_d):
+                        k = (now_local + timedelta(days=off_d)).strftime("%Y-%m-%d")
+                        ix = dtimes.index(k) if k in dtimes else None
+                        return mx[ix] if ix is not None and ix < len(mx) else None
                     per[name] = {
-                        "high_d0": d0, "high_d1": dmax(1), "high_d2": dmax(2),
+                        "high_d1": dmax(1), "high_d2": dmax(2),
                         "current": cur,
                         "max_rec": max(past) if past else None,
                         "next_min": mn[nxt] if nxt is not None and nxt < len(mn) else None,
@@ -587,35 +592,6 @@ def day_end_pkt(end_iso: str, tzname: str) -> str:
         return f"{dt:%d %b %Y}<br>{dt:%I:%M %p}"
     except Exception:  # noqa: BLE001
         return "N/A"
-
-
-# ------------------------------------------------------------- table ------
-# Header blue, group colours (light tints for "Current" body cells; sub-header row tinted per group)
-HEAD_BLUE = "background:#0070c0;color:#fff;font-weight:700;"
-GROUPS = [   # (title, sub-header tint, current-cell tint)
-    ("Met Website", "#fce4d6", "#fce4d6"),
-    ("Weather Station", "#d9d9d9", "#d9d9d9"),
-    ("Windy", "#e2efda", "#e2efda"),
-]
-SUBS = ("Current", "Today Max", "Tmrw Max", "Over Tmrw")
-KEYS = ("current", "max_rec", "high_d1", "high_d2")
-
-# Frozen (sticky) left columns: widths in px, left offsets are cumulative
-FROZEN_W = [46, 150, 95, 115]
-FROZEN_L = [0, 46, 196, 291]
-# Header rows: heights in px, sticky top offsets are cumulative
-ROW_H = [38, 44]
-ROW_T = [0, 38]
-
-BASE = ("box-sizing:border-box;border-right:1px solid #b8bec6;border-bottom:1px solid #b8bec6;"
-        "padding:4px 8px;text-align:center;font-size:13px;color:#111;")
-BODY_BG = "background:#ffffff;"
-
-
-def _frozen_style(i: int, header: bool) -> str:
-    w, left = FROZEN_W[i], FROZEN_L[i]
-    return (f"position:sticky;left:{left}px;top:{0 if header else 'auto'}{'px' if header else ''};"
-            f"width:{w}px;min-width:{w}px;max-width:{w}px;z-index:{6 if header else 3};")
 
 
 # Click par kholne wali (insani) website - raw API nahi
@@ -654,59 +630,76 @@ def met_page(city: str, icao: str, fallback: str) -> str:
     return LIST_LINKS.get(c, fallback)
 
 
-VW_CC = {   # vweatherstation.com/weather/{country}/{city}/
-    "london": "gb", "paris": "fr", "tokyo": "jp", "seoul": "kr", "beijing": "cn", "shanghai": "cn", "munich": "de",
-    "amsterdam": "nl", "madrid": "es", "rome": "it", "stockholm": "se", "ankara": "tr", "toronto": "ca", "sao paulo": "br",
-    "singapore": "sg", "lucknow": "in", "mumbai": "in", "dubai": "ae", "tel aviv": "il", "bangkok": "th", "jakarta": "id",
-    "cairo": "eg", "mexico city": "mx", "buenos aires": "ar", "bogota": "co", "santiago": "cl", "sydney": "au",
-    "melbourne": "au", "wellington": "nz", "johannesburg": "za", "helsinki": "fi", "hong kong": "hk",
-}
+# ------------------------------------------------------------- table ------
+# Light background per source for the "Current" columns
+CUR_BG = ["#d6ecff", "#d9f5dc", "#fff4c2", "#ffdfe6", "#e8dcff"]
+
+# Frozen (sticky) left columns: widths in px, left offsets are cumulative
+FROZEN_W = [46, 125, 95, 115]
+FROZEN_L = [0, 46, 171, 266]
+# Header rows: heights in px, sticky top offsets are cumulative
+ROW_H = [36, 54, 36, 36]
+ROW_T = [0, 36, 90, 126]
+
+BASE = ("box-sizing:border-box;border-right:1px solid #b8bec6;border-bottom:1px solid #b8bec6;"
+        "padding:4px 8px;text-align:center;font-size:13px;color:#111;")
+BODY_BG = "background:#ffffff;"
+HEAD_BG = "background:#e3e7ec;font-weight:600;"
 
 
-def vw_url(city: str) -> str:
-    c = norm_city(city)
-    if c == "nyc":
-        return "https://vweatherstation.com/weather/us/new-york/"
-    cc = "us" if c in _US or c == "denver" else VW_CC.get(c)
-    return f"https://vweatherstation.com/weather/{cc}/{c.replace(' ', '-')}/" if cc else "https://vweatherstation.com/weather/"
-
-
-def windy_url(lat, lon) -> str:
-    return f"https://www.windy.com/{lat:.3f}/{lon:.3f}?{lat:.3f},{lon:.3f},9"
-
-
-def click_cell(url: str, title: str) -> str:
-    return (f'<a style="color:#0b3d91" href="{html.escape(url)}" target="_blank" rel="noopener" '
-            f'title="{html.escape(title)}">Click</a>')
+def _frozen_style(i: int, header: bool) -> str:
+    w, left = FROZEN_W[i], FROZEN_L[i]
+    st_ = (f"position:sticky;left:{left}px;top:{0 if header else 'auto'}{'px' if header else ''};"
+           f"width:{w}px;min-width:{w}px;max-width:{w}px;z-index:{6 if header else 3};")
+    return st_
 
 
 def build_table(rows: list[dict]) -> str:
-    total_w = sum(FROZEN_W) + len(GROUPS) * 4 * 105
+    n = len(SOURCES)
+    total_w = sum(FROZEN_W) + 4 * 105 + n * 4 * 92
     h = [f'<div style="overflow:auto;max-height:78vh;border:1px solid #b8bec6;border-radius:4px;background:#fff">'
          f'<table style="border-collapse:separate;border-spacing:0;min-width:{total_w}px;width:100%">']
     h.append("<thead>")
 
     def th(txt, extra="", **kw):
         attrs = " ".join(f'{k}="{v}"' for k, v in kw.items())
-        return f'<th {attrs} style="{BASE}{extra}">{txt}</th>'
+        return f'<th {attrs} style="{BASE}{HEAD_BG}{extra}">{txt}</th>'
 
-    sticky = lambda row: f"position:sticky;top:{ROW_T[row]}px;z-index:4;"
-
-    # Row 1: 4 frozen headers (span 2 rows) + 3 group headers
+    # Row 1: 4 frozen rowspan headers + group header
     r1 = "".join(
-        th(t, HEAD_BLUE + _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=2)
-        for i, t in enumerate(["Sr.", "City with<br>Country", "Day End<br>(PKT)", "Poly<br>Market"]))
-    for title, _sub, _cur in GROUPS:
-        r1 += th(title, HEAD_BLUE + sticky(0) + f"height:{ROW_H[0]}px;", colspan=4)
+        th(t, _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=4)
+        for i, t in enumerate(["Sr.", "City with Country", "Day End Time<br>(PKT)", "Poly Market"]))
+    r1 += th("Met Website", f"position:sticky;top:0;z-index:5;height:{ROW_H[0]}px;", colspan=4)
+    r1 += th("Temperature °C &amp; °F",
+             f"position:sticky;top:{ROW_T[0]}px;z-index:4;height:{ROW_H[0]}px;", colspan=4 * n)
     h.append(f"<tr>{r1}</tr>")
 
-    # Row 2: Current / Today Max / Tmrw Max / Over Tmrw for each group
-    r2 = ""
-    for _title, sub, _cur in GROUPS:
-        for t in SUBS:
-            r2 += th(t, f"background:{sub};font-weight:500;font-size:14px;" + sticky(1) +
-                     f"height:{ROW_H[1]}px;width:105px;min-width:105px;")
+    # Row 2: Met Website sub-headers (rowspan 3) + site names
+    r2 = "".join(
+        th(t, f"position:sticky;top:{ROW_T[1]}px;z-index:4;height:{ROW_H[1] + ROW_H[2] + ROW_H[3]}px;width:105px;min-width:105px;"
+              f"{'background:#ffe8cc;' if i == 0 else ''}", rowspan=3)
+        for i, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
+                               "Day After<br>Tomorrow<br>Max. Recd. Temp.")))
+    r2 += "".join(
+        th(f'<a href="{SITE_HOME[nm]}" target="_blank" rel="noopener" style="color:#0b3d91">{html.escape(nm)}</a><br>'
+           f'<span style="font-weight:400;font-size:11px">({html.escape(lbl)} model)</span>',
+           f"position:sticky;top:{ROW_T[1]}px;z-index:4;height:{ROW_H[1]}px;", colspan=4)
+        for nm, lbl, _ in SOURCES)
     h.append(f"<tr>{r2}</tr>")
+
+    # Row 3: Current / Max. Recd. / Exp. Next Day
+    r3 = ""
+    for i, _ in enumerate(SOURCES):
+        r3 += th("Current", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;"
+                            f"background:{CUR_BG[i % len(CUR_BG)]};", rowspan=2)
+        r3 += th("Max. Recd.", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;", rowspan=2)
+        r3 += th("Exp. Next Day", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2]}px;", colspan=2)
+    h.append(f"<tr>{r3}</tr>")
+
+    # Row 4: Min / Max
+    r4 = "".join(th(t, f"position:sticky;top:{ROW_T[3]}px;z-index:4;height:{ROW_H[3]}px;")
+                  for _ in SOURCES for t in ("Min", "Max"))
+    h.append(f"<tr>{r4}</tr>")
     h.append("</thead><tbody>")
 
     for i, r in enumerate(rows, 1):
@@ -714,53 +707,42 @@ def build_table(rows: list[dict]) -> str:
 
         def fz(idx, content, left_align=False):
             al = "text-align:left;" if left_align else ""
-            return (f'<td style="{BASE}{row_bg}{_frozen_style(idx, False)}{al}white-space:nowrap;">{content}</td>')
+            return (f'<td style="{BASE}{row_bg}{_frozen_style(idx, False)}{al}'
+                    f'{"white-space:nowrap;" if idx != 3 else "white-space:nowrap;"}">{content}</td>')
         cells = [
             fz(0, str(i)),
-            fz(1, f'<b>{html.escape(r["city"])}</b><br>{html.escape(r["country"])}'
-                  + (f'<br><span style="font-size:11px;color:#444">{html.escape(r["icao"])}'
-                     f'{" · " + html.escape(r["stn_name"][:16]) if r["stn_name"] else ""}</span>' if r["icao"] else ""), True),
+            fz(1, f'<b>{html.escape(r["city"])}</b><br>{html.escape(r["country"])}', True),
             fz(2, r["day_end"]),
             fz(3, f'<a href="{html.escape(r["link"])}" target="_blank" rel="noopener" style="color:#0b3d91">{r["poly_html"]}</a>', True),
         ]
-
-        def add(k, cell, cur_bg):
-            cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
-            bg = f"background:{cur_bg};font-weight:600;" if k == "current" else row_bg
-            cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
-
+        # Met Website: us desh ki met service ka data; na mile to airport METAR / Open-Meteo model (label ke saath)
         tag = lambda t: f'<br><span style="font-size:10px;font-weight:400;color:#555">({t})</span>'
+        off = r["official"]
         om = r["src"].get("Open-Meteo.com", {})
-        ec = r["src"].get("ECMWF", {})
         list_url = met_page(r["city"], r["icao"], r["met_url"])
         metar_page = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
         om_page = (f"https://open-meteo.com/en/docs?latitude={r['lat']}&longitude={r['lon']}"
                    f"&hourly=temperature_2m&daily=temperature_2m_max&models=best_match&forecast_days=3&timezone=auto")
-
-        # 1) Met Website: sirf us desh ki met service ka apna data; na mile to N/A (click: us ki website)
-        off = r["official"]
-        for k in KEYS:
+        for k in ("current", "max_rec", "high_d1", "high_d2"):
             if k in off:
                 val, url, note = off[k]
-                add(k, temp_cell(val, url if url.startswith("https://www.weather.gov") or url.startswith("https://forecast.weather.gov") else list_url,
-                                 note + " (click: us airport/city ka met service page)"), GROUPS[0][2])
-            elif k in ("current", "max_rec") and r["is_metar"]:   # met data nahi: airport METAR (label ke saath)
+                cell = temp_cell(val, url if url.startswith("https://www.weather.gov") or url.startswith("https://forecast.weather.gov") else list_url,
+                                 note + " (click: us airport/city ka met service page)")
+            elif k in ("current", "max_rec") and r["is_metar"]:
                 v = r["cur_v"] if k == "current" else r["max_v"]
-                add(k, temp_cell(v, metar_page, f"Data: {r['icao']} airport METAR (NOAA) - {r['met_name']} ka apna data nahi. Click: us airport ki METAR page") + tag("METAR"), GROUPS[0][2])
-            else:                                                    # met data nahi: Open-Meteo model (label ke saath)
-                add(k, temp_cell(om.get(k), om_page, "Data: Open-Meteo model (airport ki coordinates par) - met service ka apna data nahi. Click: Open-Meteo page") + tag("model"), GROUPS[0][2])
-
-        # 2) Weather Station (vweatherstation.com): site ka data Open-Meteo se aata hai -> Open-Meteo, airport ki coordinates par
-        for k in KEYS:
-            add(k, temp_cell(om.get(k), vw_url(r["city"]),
-                             "Data: Open-Meteo (vweatherstation.com ka data source), airport ki coordinates par. Click: vweatherstation.com ka city page"),
-                GROUPS[1][2])
-
-        # 3) Windy: Windy ka default model ECMWF hai -> Open-Meteo ECMWF, airport ki coordinates par (Windy ka apna data nahi)
-        wu = windy_url(r["lat"], r["lon"])
-        for k in KEYS:
-            add(k, temp_cell(ec.get(k), wu, "Data: ECMWF model (Windy ka default model) via Open-Meteo, airport ki coordinates par. Click: Windy us airport ki location par")
-                + tag("ECMWF"), GROUPS[2][2])
+                cell = temp_cell(v, metar_page, f"Data: {r['icao']} airport METAR (NOAA) - {r['met_name']} ka apna data nahi. Click: us airport ki METAR page") + tag("METAR")
+            else:
+                cell = temp_cell(om.get(k), om_page, "Data: Open-Meteo model (city ki coordinates par) - met service ka apna data nahi. Click: Open-Meteo page") + tag("model")
+            cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
+            bg = "background:#ffe8cc;font-weight:600;" if k == "current" else row_bg
+            cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
+        for si, (name, _l, model) in enumerate(SOURCES):
+            src = r["src"].get(name, {})
+            url = source_url(r["lat"], r["lon"], model)
+            for k in ("current", "max_rec", "next_min", "next_max"):
+                bg = (f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg)
+                cell = temp_cell(src.get(k), url).replace("<a href", '<a style="color:#0b3d91" href')
+                cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
         h.append("<tr>" + "".join(cells) + "</tr>")
     h.append("</tbody></table></div>")
     return "".join(h)
@@ -793,51 +775,38 @@ city_options = sorted(poly["city"].unique())
 picked = st.sidebar.multiselect(
     "Cities select karein", city_options,
     default=city_options,   # sab Polymarket cities pehle se select
-    help="Shuru mein sab cities select hoti hain (aur % filter lagta hai). "
-         "Kisi city ko hatane ke liye uske naam ke saath x dabayein.")
+    help="Shuru mein sab cities select hoti hain (aur % filter lagta hai). Kisi city ko hatane ke liye x dabayein.")
 
 # Filter: top-2 outcomes both inside [lo, hi]
 poly["top2"] = poly["buckets"].apply(lambda b: b[:2])
 poly["pass"] = poly["top2"].apply(lambda t: len(t) == 2 and all(lo <= p <= hi for _, p in t))
 
 def keep(r) -> bool:
-    in_list = (r["city"] in picked) if picked else True       # city list
-    in_band = show_all or bool(r["pass"])                       # % filter
-    return in_list and in_band
+    in_list = (r["city"] in picked) if picked else True
+    return in_list and (show_all or bool(r["pass"]))
 
 
 all_rows = []
 for _, r in poly.iterrows():
-    all_rows.append((r, locate(r["city"])))
-
+    loc = locate(r["city"])
+    all_rows.append((r, loc))
 
 def icao_for(r) -> str:
     return (str(r.get("icao") or "")).upper() or FALLBACK_ICAO.get(norm_city(r["city"]), "")
 
 
-selected = [(r, loc) for r, loc in all_rows if keep(r)]
-icaos = tuple(sorted({icao_for(r) for r, _ in selected if icao_for(r)}))
+chosen = [(r, loc) for r, loc in all_rows if keep(r) and loc]
+icaos = tuple(sorted({icao_for(r) for r, _ in chosen if icao_for(r)}))
 metar, m_err = fetch_metar(icaos) if icaos else ({}, None)
 if m_err:
     st.warning(m_err)
-
-chosen = []   # (poly row, location, METAR station or None, icao)
-for r, loc in selected:
-    ic = icao_for(r)
-    stn = metar.get(ic)
-    if stn and stn.get("lat") is not None:   # forecast bhi airport ki coordinates par
-        cc = stn["name"].split(",")[-1].strip() if stn.get("name") else ""
-        loc = {"country": (loc or {}).get("country") or cc, "lat": stn["lat"], "lon": stn["lon"]}
-    if loc:
-        chosen.append((r, loc, stn, ic))
-
-coords = tuple(sorted({(round(loc["lat"], 4), round(loc["lon"], 4)) for _, loc, _, _ in chosen}))
+coords = tuple(sorted({(round(loc["lat"], 4), round(loc["lon"], 4)) for _, loc in chosen}))
 weather, w_err, w_stamp = fetch_weather(coords) if coords else ({}, None, None)
 if w_err:
     st.warning(w_err)
 
 def _official_for(official: dict, city: str, ic: str) -> dict:
-    """Official data tabhi jab uska station wohi airport ho jo Polymarket use karta hai (warna 'Click')."""
+    """Official data tabhi jab uska station wohi airport ho jo Polymarket use karta hai."""
     c = norm_city(city)
     cfg = OFFICIAL.get(c)
     if cfg and cfg[0] == "nws" and ic and ic != cfg[2]["icao"]:
@@ -845,15 +814,14 @@ def _official_for(official: dict, city: str, ic: str) -> dict:
     return official.get(c, {})
 
 
-official = fetch_official(tuple(sorted({norm_city(r["city"]) for r, _, _, _ in chosen}))) if chosen else {}
+official = fetch_official(tuple(sorted({norm_city(r["city"]) for r, _ in chosen}))) if chosen else {}
 rows = []
-for r, loc, stn, ic in chosen:
+for r, loc in chosen:
     wk = (round(loc["lat"], 4), round(loc["lon"], 4))
     w = weather.get(wk, {"tz": "UTC", "src": {}})
-    poly_html = "<br>".join(f"<b>{p:.0f}%</b> ({html.escape(t)})" for t, p in r["top2"]) or "N/A"
-    om = w["src"].get("Open-Meteo.com", {})
-    # Asli airport reading (METAR): current + local-day max so far
-    cur_v, max_v, obs_note = om.get("current"), om.get("max_rec"), ""
+    ic = icao_for(r)
+    stn = metar.get(ic)
+    cur_v = max_v = None
     is_metar = bool(stn and stn["obs"])
     if is_metar:
         try:
@@ -864,55 +832,50 @@ for r, loc, stn, ic in chosen:
         todays = [t for ep, t in stn["obs"] if datetime.fromtimestamp(ep, zi).date() == today_local]
         cur_v = stn["obs"][-1][1]
         max_v = max(todays) if todays else None
-        obs_note = datetime.fromtimestamp(stn["obs"][-1][0], PKT).strftime("%d %b %I:%M %p PKT")
+    poly_html = "<br>".join(f"<b>{p:.0f}%</b> ({html.escape(t)})" for t, p in r["top2"]) or "N/A"
     rows.append({"city": r["city"], "country": loc["country"],
                  "day_end": day_end_pkt(r["end"], w["tz"]), "link": r["link"],
                  "poly_html": poly_html, "src": w["src"], "lat": loc["lat"], "lon": loc["lon"],
-                 "icao": ic, "stn_name": (stn["name"].split(",")[0] if stn else ""),
-                 "official": _official_for(official, r["city"], ic), "is_metar": is_metar, "obs_note": obs_note, "cur_v": cur_v, "max_v": max_v,
+                 "icao": ic, "is_metar": is_metar, "cur_v": cur_v, "max_v": max_v,
+                 "official": _official_for(official, r["city"], ic),
                  "met_name": met_site(r["city"], loc["country"])[0],
                  "met_url": met_site(r["city"], loc["country"])[1]})
 
-skipped = [r["city"] for r, loc in all_rows if keep(r) and not loc and not metar.get(icao_for(r))]
+skipped = [r["city"] for r, loc in all_rows if keep(r) and not loc]
 c1, c2, c3 = st.columns(3)
 c1.metric("Polymarket cities", len(poly))
-pool = poly[poly["city"].isin(picked)] if picked else poly
-c2.metric(f"Filter pass ({lo}-{hi}%)", f"{int(pool['pass'].sum())} / {len(pool)}")
+c2.metric(f"Filter pass ({lo}-{hi}%)", int(poly["pass"].sum()))
 c3.metric("Weather fetched", w_stamp or "N/A")
 
 tab_t, tab_m, tab_p = st.tabs(["📋 Table", "🗺️ Map", "📈 All Polymarket cities"])
 with tab_t:
     if not rows:
-        st.info(f"Chuni hui cities mein abhi koi aisi nahi jis ke top 2 outcomes {lo}% se {hi}% ke beech hon. "
-                "Slider ki range badhayein ya sidebar mein '% filter off' tick karein." if picked else
+        st.info("Choose ki hui cities ka market abhi nahi mila." if picked else
                 f"Abhi koi city nahi jis ke top 2 outcomes {lo}% se {hi}% ke beech hon.")
     else:
         st.html(build_table(rows))
         flat = pd.DataFrame([{
             "city": r["city"], "country": r["country"],
             "met_website": r["met_url"],
-            "airport_icao": r["icao"], "airport_reading_is_metar": r["is_metar"],
-            "airport_current_c": r["cur_v"], "airport_today_max_recd_c": r["max_v"],
-            "met_current_c": (r["official"].get("current") or (None,))[0],
-            "met_today_max_c": (r["official"].get("max_rec") or (None,))[0],
-            "met_tomorrow_max_c": (r["official"].get("high_d1") or (None,))[0],
-            "met_day_after_max_c": (r["official"].get("high_d2") or (None,))[0],
             "polymarket": re.sub("<[^>]+>", "", r["poly_html"].replace("<br>", " | ")),
-            "day_end_pkt": re.sub("<[^>]+>", " ", r["day_end"])} for r in rows])
+            "day_end_pkt": re.sub("<[^>]+>", " ", r["day_end"]),
+            **{f"{n}_{k}_c": r["src"].get(n, {}).get(k) for n, _, _ in SOURCES
+               for k in ("current", "max_rec", "next_min", "next_max")}} for r in rows])
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
     st.caption("MET WEBSITE: jahan us desh ki met service ka free data milta hai (Helsinki: FMI, Singapore: NEA/MSS, Hong Kong: HKO, Munich: DWD, US cities: NWS) wahan unka apna data; "
-               "click par wohi met website khulti hai. Baqi jagah (jahan met service ka data bina API key ke nahi milta) number ke neeche label hai: (METAR) = us airport ki NOAA METAR reading "
-               "(click: aviationweather.gov ki METAR page), (model) = Open-Meteo forecast (click: Open-Meteo page) - ye us desh ki met service ka apna data nahi hai. "
-               "WEATHER STATION: vweatherstation.com apna data Open-Meteo se leta hai aur uski public API nahi, is liye Open-Meteo ('Best match') ke numbers hain. "
-               "WINDY: Windy ka default model ECMWF hai; yahan Open-Meteo se ECMWF ke numbers hain, Windy ka apna data nahi. "
-               "Sab numbers airport ki coordinates par hain; number par click karne se us column ki website khulti hai (tooltip mein asli data source likha hota hai). Today Max = local din ka ab tak ka maximum; Tmrw / Over Tmrw = forecast max.")
+               "baqi jagah number ke neeche label hai: (METAR) = us airport ki NOAA METAR reading, (model) = Open-Meteo forecast - ye met service ka apna data nahi hai. "
+               "Sab weather columns Open-Meteo API ke alag models se hain (ECMWF, NOAA GFS, DWD ICON, CMA, Best match); "
+               "ye Windy/Weather.gov/Wunderground/Weather.com ke apne published numbers nahi hain. "
+               "Har temperature par click karein to wohi Open-Meteo API page khulega jahan se number liya gaya. "
+               "Header mein site ke naam par click se us site ka homepage khulta hai. "
+               "Max. Recd. = aaj ka ab tak ka model-based maximum (city ke local din ka).")
 
 with tab_m:
     if rows:
         mdf = pd.DataFrame([{"city": r["city"], "lat": r["lat"], "lon": r["lon"],
-                             "temp": r["cur_v"]} for r in rows])
+                             "temp": (r["src"].get(SOURCES[0][0], {}) or {}).get("current")} for r in rows])
         fig = px.scatter_geo(mdf, lat="lat", lon="lon", hover_name="city", color="temp",
                              color_continuous_scale="RdYlBu_r", projection="natural earth")
         fig.update_traces(marker={"size": 11})
