@@ -736,9 +736,9 @@ if poly.empty:
 city_options = sorted(poly["city"].unique())
 picked = st.sidebar.multiselect(
     "Cities select karein", city_options,
-    default=[c for c in city_options if norm_city(c) in {norm_city(x) for x in DEFAULT_CITIES}],
-    help="Sirf yehi cities dikhengi, aur un par upar wala % filter bhi lagega. "
-         "Khali chhodein to Polymarket ki sab cities par % filter lagega.")
+    default=city_options,   # sab Polymarket cities pehle se select
+    help="Shuru mein sab cities select hoti hain (aur % filter lagta hai). "
+         "Kisi city ko hatane ke liye uske naam ke saath x dabayein.")
 
 # Filter: top-2 outcomes both inside [lo, hi]
 poly["top2"] = poly["buckets"].apply(lambda b: b[:2])
