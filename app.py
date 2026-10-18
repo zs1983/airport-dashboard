@@ -168,11 +168,12 @@ SOURCES = [
 ]
 SITE_HOME = {
     "Windy.com": "https://www.windy.com/",
-    "Weather.gov": "https://www.weather.gov/",
+    "Weather.gov": "https://aviationweather.gov/data/metar/",
     "Wunderground.com": "https://www.wunderground.com/",
     "Weather.com": "https://en.weather.com.cn/",
     "Open-Meteo.com": "https://open-meteo.com/",
 }
+AVN = "Weather.gov"   # SOURCES ki ye entry ab 'aviationweather.gov' group ke taur par dikhti hai (METAR data)
 TITLE_RE = re.compile(r"^Highest temperature in (.+?) on (.+?)\?*$", re.I)
 
 
@@ -681,15 +682,23 @@ def build_table(rows: list[dict]) -> str:
         for i, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
                                "Day After<br>Tomorrow<br>Max. Recd. Temp.")))
     r2 += "".join(
-        th(f'<a href="{SITE_HOME[nm]}" target="_blank" rel="noopener" style="color:#0b3d91">{html.escape(nm)}</a><br>'
-           f'<span style="font-weight:400;font-size:11px">({html.escape(lbl)} model)</span>',
+        th(f'<a href="{SITE_HOME[nm]}" target="_blank" rel="noopener" style="color:#0b3d91">'
+           f'{"aviationweather.gov" if nm == AVN else html.escape(nm)}</a><br>'
+           f'<span style="font-weight:400;font-size:11px">'
+           f'{"(airport METAR; forecast: model)" if nm == AVN else "(" + html.escape(lbl) + " model)"}</span>',
            f"position:sticky;top:{ROW_T[1]}px;z-index:4;height:{ROW_H[1]}px;", colspan=4)
         for nm, lbl, _ in SOURCES)
     h.append(f"<tr>{r2}</tr>")
 
     # Row 3: Current / Max. Recd. / Exp. Next Day
     r3 = ""
-    for i, _ in enumerate(SOURCES):
+    for i, (nm_, _l, _m) in enumerate(SOURCES):
+        if nm_ == AVN:   # aviationweather.gov: Current / Today Max / Tomorrow Max / Day After Tomorrow Max
+            for j, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
+                                   "Day After<br>Tomorrow<br>Max. Recd. Temp.")):
+                r3 += th(t, f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;"
+                            f"{'background:' + CUR_BG[i % len(CUR_BG)] + ';' if j == 0 else ''}", rowspan=2)
+            continue
         r3 += th("Current", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;"
                             f"background:{CUR_BG[i % len(CUR_BG)]};", rowspan=2)
         r3 += th("Max. Recd.", f"position:sticky;top:{ROW_T[2]}px;z-index:4;height:{ROW_H[2] + ROW_H[3]}px;", rowspan=2)
@@ -698,7 +707,7 @@ def build_table(rows: list[dict]) -> str:
 
     # Row 4: Min / Max
     r4 = "".join(th(t, f"position:sticky;top:{ROW_T[3]}px;z-index:4;height:{ROW_H[3]}px;")
-                  for _ in SOURCES for t in ("Min", "Max"))
+                  for nm_, _l, _m in SOURCES if nm_ != AVN for t in ("Min", "Max"))
     h.append(f"<tr>{r4}</tr>")
     h.append("</thead><tbody>")
 
@@ -737,6 +746,19 @@ def build_table(rows: list[dict]) -> str:
             bg = "background:#ffe8cc;font-weight:600;" if k == "current" else row_bg
             cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
         for si, (name, _l, model) in enumerate(SOURCES):
+            if name == AVN:   # aviationweather.gov: METAR (Current / Today Max), forecast Open-Meteo "(model)"
+                for k in ("current", "max_rec", "high_d1", "high_d2"):
+                    bg = (f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg)
+                    if k in ("current", "max_rec") and r["is_metar"]:
+                        v = r["cur_v"] if k == "current" else r["max_v"]
+                        cell = temp_cell(v, metar_page, f"{r['icao']} airport METAR - aviationweather.gov (last obs {r['obs_note']})")
+                    elif k in ("current", "max_rec"):
+                        cell = temp_cell(om.get(k), om_page, "METAR available nahi: Open-Meteo model value") + tag("model")
+                    else:
+                        cell = temp_cell(om.get(k), om_page, "aviationweather.gov forecast temperature publish nahi karta: Open-Meteo model") + tag("model")
+                    cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
+                    cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
+                continue
             src = r["src"].get(name, {})
             url = source_url(r["lat"], r["lon"], model)
             for k in ("current", "max_rec", "next_min", "next_max"):
@@ -822,6 +844,7 @@ for r, loc in chosen:
     ic = icao_for(r)
     stn = metar.get(ic)
     cur_v = max_v = None
+    obs_note = ""
     is_metar = bool(stn and stn["obs"])
     if is_metar:
         try:
@@ -832,11 +855,12 @@ for r, loc in chosen:
         todays = [t for ep, t in stn["obs"] if datetime.fromtimestamp(ep, zi).date() == today_local]
         cur_v = stn["obs"][-1][1]
         max_v = max(todays) if todays else None
+        obs_note = datetime.fromtimestamp(stn["obs"][-1][0], PKT).strftime("%d %b %I:%M %p PKT")
     poly_html = "<br>".join(f"<b>{p:.0f}%</b> ({html.escape(t)})" for t, p in r["top2"]) or "N/A"
     rows.append({"city": r["city"], "country": loc["country"],
                  "day_end": day_end_pkt(r["end"], w["tz"]), "link": r["link"],
                  "poly_html": poly_html, "src": w["src"], "lat": loc["lat"], "lon": loc["lon"],
-                 "icao": ic, "is_metar": is_metar, "cur_v": cur_v, "max_v": max_v,
+                 "icao": ic, "is_metar": is_metar, "obs_note": obs_note, "cur_v": cur_v, "max_v": max_v,
                  "official": _official_for(official, r["city"], ic),
                  "met_name": met_site(r["city"], loc["country"])[0],
                  "met_url": met_site(r["city"], loc["country"])[1]})
@@ -864,7 +888,9 @@ with tab_t:
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
-    st.caption("MET WEBSITE: jahan us desh ki met service ka free data milta hai (Helsinki: FMI, Singapore: NEA/MSS, Hong Kong: HKO, Munich: DWD, US cities: NWS) wahan unka apna data; "
+    st.caption("AVIATIONWEATHER.GOV: Current aur Today Max. Recd. = us airport ki NOAA METAR reading (click: aviationweather.gov ka METAR page). "
+               "aviationweather.gov forecast temperature publish nahi karta, is liye Tomorrow / Day After Tomorrow Open-Meteo model hain, neeche '(model)' likha hai. "
+               "MET WEBSITE: jahan us desh ki met service ka free data milta hai (Helsinki: FMI, Singapore: NEA/MSS, Hong Kong: HKO, Munich: DWD, US cities: NWS) wahan unka apna data; "
                "baqi jagah number ke neeche label hai: (METAR) = us airport ki NOAA METAR reading, (model) = Open-Meteo forecast - ye met service ka apna data nahi hai. "
                "Sab weather columns Open-Meteo API ke alag models se hain (ECMWF, NOAA GFS, DWD ICON, CMA, Best match); "
                "ye Windy/Weather.gov/Wunderground/Weather.com ke apne published numbers nahi hain. "
