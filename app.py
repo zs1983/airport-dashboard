@@ -618,6 +618,29 @@ def _frozen_style(i: int, header: bool) -> str:
             f"width:{w}px;min-width:{w}px;max-width:{w}px;z-index:{6 if header else 3};")
 
 
+# Click par kholne wali (insani) website - raw API nahi
+HUMAN_LINK = {
+    "helsinki": "https://en.ilmatieteenlaitos.fi/", "singapore": "https://www.weather.gov.sg/",
+    "hong kong": "https://www.hko.gov.hk/en/index.html",
+    "munich": "https://www.dwd.de/EN/weather/weather_climate_local/bavaria/munic/_node.html",
+}
+VW_CC = {   # vweatherstation.com/weather/{country}/{city}/
+    "london": "gb", "paris": "fr", "tokyo": "jp", "seoul": "kr", "beijing": "cn", "shanghai": "cn", "munich": "de",
+    "amsterdam": "nl", "madrid": "es", "rome": "it", "stockholm": "se", "ankara": "tr", "toronto": "ca", "sao paulo": "br",
+    "singapore": "sg", "lucknow": "in", "mumbai": "in", "dubai": "ae", "tel aviv": "il", "bangkok": "th", "jakarta": "id",
+    "cairo": "eg", "mexico city": "mx", "buenos aires": "ar", "bogota": "co", "santiago": "cl", "sydney": "au",
+    "melbourne": "au", "wellington": "nz", "johannesburg": "za", "helsinki": "fi", "hong kong": "hk",
+}
+
+
+def vw_url(city: str) -> str:
+    c = norm_city(city)
+    if c == "nyc":
+        return "https://vweatherstation.com/weather/us/new-york/"
+    cc = "us" if c in _US or c == "denver" else VW_CC.get(c)
+    return f"https://vweatherstation.com/weather/{cc}/{c.replace(' ', '-')}/" if cc else "https://vweatherstation.com/weather/"
+
+
 def windy_url(lat, lon) -> str:
     return f"https://www.windy.com/{lat:.3f}/{lon:.3f}?{lat:.3f},{lon:.3f},9"
 
@@ -679,31 +702,30 @@ def build_table(rows: list[dict]) -> str:
         tag = lambda t: f'<br><span style="font-size:10px;font-weight:400;color:#555">({t})</span>'
         om = r["src"].get("Open-Meteo.com", {})
         ec = r["src"].get("ECMWF", {})
-        om_url = source_url(r["lat"], r["lon"], "best_match")
-        metar_url = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
+        list_url = LIST_LINKS.get(norm_city(r["city"]), r["met_url"])
 
         # 1) Met Website: us desh ki met service ka data jahan free API hai; warna airport METAR (obs) / Open-Meteo (forecast), label ke saath
         off = r["official"]
         for k in KEYS:
             if k in off:
                 val, url, note = off[k]
-                add(k, temp_cell(val, url, note), GROUPS[0][2])
+                add(k, temp_cell(val, HUMAN_LINK.get(norm_city(r["city"]), url), note + " (click: met service ki website)"), GROUPS[0][2])
             elif k in ("current", "max_rec") and r["is_metar"]:
                 v = r["cur_v"] if k == "current" else r["max_v"]
-                add(k, temp_cell(v, metar_url, f"{r['icao']} airport METAR (NOAA) - {r['met_name']} ka apna data nahi") + tag("METAR"), GROUPS[0][2])
+                add(k, temp_cell(v, list_url, f"Data: {r['icao']} airport METAR (NOAA), {r['met_name']} ka apna data nahi. Click: {r['met_name']} website") + tag("METAR"), GROUPS[0][2])
             else:
-                add(k, temp_cell(om.get(k), om_url, f"Open-Meteo model - {r['met_name']} ka apna data nahi") + tag("model"), GROUPS[0][2])
+                add(k, temp_cell(om.get(k), list_url, f"Data: Open-Meteo model, {r['met_name']} ka apna data nahi. Click: {r['met_name']} website") + tag("model"), GROUPS[0][2])
 
         # 2) Weather Station (vweatherstation.com): site ka data Open-Meteo se aata hai -> Open-Meteo, airport ki coordinates par
         for k in KEYS:
-            add(k, temp_cell(om.get(k), om_url,
-                             "Open-Meteo (vweatherstation.com ka data source), airport ki coordinates par - vweatherstation ka apna page nahi"),
+            add(k, temp_cell(om.get(k), vw_url(r["city"]),
+                             "Data: Open-Meteo (vweatherstation.com ka data source), airport ki coordinates par. Click: vweatherstation.com ka city page"),
                 GROUPS[1][2])
 
         # 3) Windy: Windy ka default model ECMWF hai -> Open-Meteo ECMWF, airport ki coordinates par (Windy ka apna data nahi)
-        ec_url = source_url(r["lat"], r["lon"], "ecmwf_ifs025")
+        wu = windy_url(r["lat"], r["lon"])
         for k in KEYS:
-            add(k, temp_cell(ec.get(k), ec_url, "ECMWF model (Windy ka default model) via Open-Meteo, airport ki coordinates par - Windy ka apna data nahi")
+            add(k, temp_cell(ec.get(k), wu, "Data: ECMWF model (Windy ka default model) via Open-Meteo, airport ki coordinates par. Click: Windy us airport ki location par")
                 + tag("ECMWF"), GROUPS[2][2])
         h.append("<tr>" + "".join(cells) + "</tr>")
     h.append("</tbody></table></div>")
@@ -851,7 +873,7 @@ with tab_t:
                "(Tmrw / Over Tmrw) - ye us desh ki met service ka apna data nahi hai. "
                "WEATHER STATION: vweatherstation.com apna data Open-Meteo se leta hai aur uski public API nahi, is liye Open-Meteo ('Best match') ke numbers hain. "
                "WINDY: Windy ka default model ECMWF hai; yahan Open-Meteo se ECMWF ke numbers hain, Windy ka apna data nahi. "
-               "Sab numbers airport ki coordinates par hain; click par us number ka source khulta hai. Today Max = local din ka ab tak ka maximum; Tmrw / Over Tmrw = forecast max.")
+               "Sab numbers airport ki coordinates par hain; number par click karne se us column ki website khulti hai (tooltip mein asli data source likha hota hai). Today Max = local din ka ab tak ka maximum; Tmrw / Over Tmrw = forecast max.")
 
 with tab_m:
     if rows:
