@@ -11,6 +11,7 @@ import html
 import json
 import re
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,90 @@ TIMEOUT = 15
 POLY_TTL = 10          # seconds
 WEATHER_TTL = 300      # seconds (Open-Meteo data itself updates ~every 15 min)
 PKT = ZoneInfo("Asia/Karachi")
+
+# Agar yahan cities likh dein to dashboard hamesha shuru se sirf inhi ko dikhayega.
+# Khali [] ka matlab: sidebar se choose karein (ya filter ke hisab se sab).
+# Misal: DEFAULT_CITIES = ["London", "Karachi", "Seoul"]
+DEFAULT_CITIES: list[str] = [
+    "London", "Paris", "Wellington", "Munich", "Tokyo", "Hong Kong", "Shanghai",
+    "Singapore", "Beijing", "Moscow", "Amsterdam", "Helsinki", "NYC", "Denver",
+    "Sao Paulo", "Buenos Aires",
+]
+
+# Alag spelling wale naam ek jaise samjhe jayen (accents aur case ignore hote hain)
+CITY_ALIASES = {"new york": "nyc", "new york city": "nyc", "sao paulo": "sao paulo"}
+# Location dhoondne ke liye (geocoding) behtar naam
+GEO_ALIASES = {"NYC": "New York", "nyc": "New York"}
+
+
+# Har country/city ki national met (weather) service ki website. Naya add karna ho to bas ek line.
+# City-specific override pehle check hota hai, phir country, aur phir WMO ka fallback.
+MET_BY_CITY = {
+    "nyc": ("NWS New York", "https://www.weather.gov/okx/"),
+    "denver": ("NWS Boulder", "https://www.weather.gov/bou/"),
+    "hong kong": ("Hong Kong Observatory", "https://www.hko.gov.hk/en/index.html"),
+    "wellington": ("MetService", "https://www.metservice.com/"),
+    "munich": ("DWD", "https://www.dwd.de/EN/Home/home_node.html"),
+    "shanghai": ("CMA", "https://english.cma.gov.cn/"),
+    "beijing": ("CMA", "https://english.cma.gov.cn/"),
+    "moscow": ("Hydrometcenter", "https://meteoinfo.ru/en/"),
+    "helsinki": ("FMI", "https://en.ilmatieteenlaitos.fi/"),
+    "sao paulo": ("INMET", "https://portal.inmet.gov.br/"),
+    "buenos aires": ("SMN Argentina", "https://www.smn.gob.ar/"),
+}
+MET_BY_COUNTRY = {
+    "united kingdom": ("Met Office", "https://www.metoffice.gov.uk/"),
+    "france": ("Meteo-France", "https://meteofrance.com/"),
+    "new zealand": ("MetService", "https://www.metservice.com/"),
+    "germany": ("DWD", "https://www.dwd.de/EN/Home/home_node.html"),
+    "japan": ("JMA", "https://www.jma.go.jp/jma/indexe.html"),
+    "china": ("CMA", "https://english.cma.gov.cn/"),
+    "singapore": ("MSS", "https://www.weather.gov.sg/"),
+    "russia": ("Hydrometcenter", "https://meteoinfo.ru/en/"),
+    "netherlands": ("KNMI", "https://www.knmi.nl/home"),
+    "finland": ("FMI", "https://en.ilmatieteenlaitos.fi/"),
+    "united states": ("NWS", "https://www.weather.gov/"),
+    "usa": ("NWS", "https://www.weather.gov/"),
+    "brazil": ("INMET", "https://portal.inmet.gov.br/"),
+    "argentina": ("SMN Argentina", "https://www.smn.gob.ar/"),
+    "south korea": ("KMA", "https://www.kma.go.kr/eng/index.jsp"),
+    "pakistan": ("PMD", "https://www.pmd.gov.pk/"),
+    "india": ("IMD", "https://mausam.imd.gov.in/"),
+    "turkey": ("MGM", "https://www.mgm.gov.tr/eng/forecast-cities.aspx"),
+    "turkiye": ("MGM", "https://www.mgm.gov.tr/eng/forecast-cities.aspx"),
+    "united arab emirates": ("NCM", "https://www.ncm.gov.ae/"),
+    "uae": ("NCM", "https://www.ncm.gov.ae/"),
+    "canada": ("Environment Canada", "https://weather.gc.ca/"),
+    "australia": ("BoM", "http://www.bom.gov.au/"),
+    "israel": ("IMS", "https://ims.gov.il/en"),
+    "spain": ("AEMET", "https://www.aemet.es/en/portada"),
+    "italy": ("Aeronautica Militare", "https://www.meteoam.it/"),
+    "poland": ("IMGW", "https://www.imgw.pl/"),
+    "mexico": ("SMN Mexico", "https://smn.conagua.gob.mx/"),
+    "taiwan": ("CWA", "https://www.cwa.gov.tw/eng/"),
+    "thailand": ("TMD", "https://www.tmd.go.th/en"),
+    "malaysia": ("MetMalaysia", "https://www.met.gov.my/en/"),
+    "philippines": ("PAGASA", "https://www.pagasa.dost.gov.ph/"),
+    "south africa": ("SAWS", "https://www.weathersa.co.za/"),
+    "saudi arabia": ("NCM", "https://ncm.gov.sa/"),
+    "indonesia": ("BMKG", "https://www.bmkg.go.id/"),
+    "chile": ("Meteo Chile", "https://www.meteochile.gob.cl/"),
+    "peru": ("SENAMHI", "https://www.senamhi.gob.pe/"),
+    "colombia": ("IDEAM", "http://www.ideam.gov.co/"),
+}
+MET_FALLBACK = ("WMO World Weather", "https://worldweather.wmo.int/en/home.html")
+
+
+def met_site(city: str, country: str) -> tuple[str, str]:
+    c = norm_city(city)
+    if c in MET_BY_CITY:
+        return MET_BY_CITY[c]
+    return MET_BY_COUNTRY.get(norm_city(country or ""), MET_FALLBACK)
+
+
+def norm_city(name: str) -> str:
+    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower().strip()
+    return CITY_ALIASES.get(n, n)
 
 # Column group -> Open-Meteo model.  These are the *models* closest to each
 # site's data source; they are NOT the sites' own published numbers.
@@ -121,6 +206,7 @@ def load_airports(path: str = "airports.csv") -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def locate(city: str) -> dict | None:
     """City -> {country, lat, lon}. airports.csv first, then Open-Meteo geocoding."""
+    city = GEO_ALIASES.get(city, city)
     ap = load_airports()
     m = ap[ap["city"].str.lower() == city.lower()]
     if not m.empty:
@@ -300,6 +386,8 @@ def build_table(rows: list[dict]) -> str:
     r1 = "".join(
         th(t, _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=4)
         for i, t in enumerate(["Sr.", "City with Country", "Day End Time<br>(PKT)", "Poly Market"]))
+    r1 += th("Met Website<br>(Country)",
+             f"position:sticky;top:0;z-index:5;width:120px;min-width:120px;height:{sum(ROW_H)}px;", rowspan=4)
     r1 += th("Temperature °C &amp; °F",
              f"position:sticky;top:{ROW_T[0]}px;z-index:4;height:{ROW_H[0]}px;", colspan=4 * n)
     h.append(f"<tr>{r1}</tr>")
@@ -340,6 +428,10 @@ def build_table(rows: list[dict]) -> str:
             fz(2, r["day_end"]),
             fz(3, f'<a href="{html.escape(r["link"])}" target="_blank" rel="noopener" style="color:#0b3d91">{r["poly_html"]}</a>', True),
         ]
+        cells.append(
+            f'<td style="{BASE}{row_bg}white-space:nowrap;">'
+            f'<a href="{html.escape(r["met_url"])}" target="_blank" rel="noopener" style="color:#0b3d91">'
+            f'{html.escape(r["met_name"])}</a></td>')
         for si, (name, _l, model) in enumerate(SOURCES):
             src = r["src"].get(name, {})
             url = source_url(r["lat"], r["lon"], model)
@@ -374,17 +466,28 @@ if poly.empty:
     st.info("Abhi koi Highest-temperature Polymarket market nahi mili.")
     st.stop()
 
+# City picker: sirf choose ki hui cities ka data (khali = filter ke hisab se sab)
+city_options = sorted(poly["city"].unique())
+picked = st.sidebar.multiselect(
+    "Cities select karein", city_options,
+    default=[c for c in city_options if norm_city(c) in {norm_city(x) for x in DEFAULT_CITIES}],
+    help="Jo cities yahan choose karenge sirf unka data dikhega (percentage filter ke bina). "
+         "Khali chhodein to upar wale % filter ke hisab se cities dikhengi.")
+
 # Filter: top-2 outcomes both inside [lo, hi]
 poly["top2"] = poly["buckets"].apply(lambda b: b[:2])
 poly["pass"] = poly["top2"].apply(lambda t: len(t) == 2 and all(lo <= p <= hi for _, p in t))
-sel = poly if show_all else poly[poly["pass"]]
+
+def keep(r) -> bool:
+    return (r["city"] in picked) if picked else (show_all or bool(r["pass"]))
+
 
 all_rows = []
 for _, r in poly.iterrows():
     loc = locate(r["city"])
     all_rows.append((r, loc))
 
-chosen = [(r, loc) for r, loc in all_rows if (show_all or r["pass"]) and loc]
+chosen = [(r, loc) for r, loc in all_rows if keep(r) and loc]
 coords = tuple(sorted({(round(loc["lat"], 4), round(loc["lon"], 4)) for _, loc in chosen}))
 weather, w_err, w_stamp = fetch_weather(coords) if coords else ({}, None, None)
 if w_err:
@@ -397,9 +500,11 @@ for r, loc in chosen:
     poly_html = "<br>".join(f"<b>{p:.0f}%</b> ({html.escape(t)})" for t, p in r["top2"]) or "N/A"
     rows.append({"city": r["city"], "country": loc["country"],
                  "day_end": day_end_pkt(r["end"], w["tz"]), "link": r["link"],
-                 "poly_html": poly_html, "src": w["src"], "lat": loc["lat"], "lon": loc["lon"]})
+                 "poly_html": poly_html, "src": w["src"], "lat": loc["lat"], "lon": loc["lon"],
+                 "met_name": met_site(r["city"], loc["country"])[0],
+                 "met_url": met_site(r["city"], loc["country"])[1]})
 
-skipped = [r["city"] for r, loc in all_rows if (show_all or r["pass"]) and not loc]
+skipped = [r["city"] for r, loc in all_rows if keep(r) and not loc]
 c1, c2, c3 = st.columns(3)
 c1.metric("Polymarket cities", len(poly))
 c2.metric(f"Filter pass ({lo}-{hi}%)", int(poly["pass"].sum()))
@@ -408,11 +513,13 @@ c3.metric("Weather fetched", w_stamp or "N/A")
 tab_t, tab_m, tab_p = st.tabs(["📋 Table", "🗺️ Map", "📈 All Polymarket cities"])
 with tab_t:
     if not rows:
-        st.info(f"Abhi koi city nahi jis ke top 2 outcomes {lo}% se {hi}% ke beech hon.")
+        st.info("Choose ki hui cities ka market abhi nahi mila." if picked else
+                f"Abhi koi city nahi jis ke top 2 outcomes {lo}% se {hi}% ke beech hon.")
     else:
         st.html(build_table(rows))
         flat = pd.DataFrame([{
             "city": r["city"], "country": r["country"],
+            "met_website": r["met_url"],
             "polymarket": re.sub("<[^>]+>", "", r["poly_html"].replace("<br>", " | ")),
             "day_end_pkt": re.sub("<[^>]+>", " ", r["day_end"]),
             **{f"{n}_{k}_c": r["src"].get(n, {}).get(k) for n, _, _ in SOURCES
