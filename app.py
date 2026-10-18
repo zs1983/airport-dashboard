@@ -165,7 +165,6 @@ def norm_city(name: str) -> str:
 # Sirf Met Website ke tomorrow / day-after forecast ke liye (Open-Meteo Best match, airport ki coordinates par).
 OM_SOURCES = [("Open-Meteo.com", "Best match", "best_match")]
 # Table mein dikhne wali 2 websites
-SITES = [("City ki met website", "")]
 TITLE_RE = re.compile(r"^Highest temperature in (.+?) on (.+?)\?*$", re.I)
 
 
@@ -591,69 +590,70 @@ def day_end_pkt(end_iso: str, tzname: str) -> str:
 
 
 # ------------------------------------------------------------- table ------
-# Light background per source for the "Current" columns
-CUR_BG = ["#d6ecff", "#d9f5dc", "#fff4c2"]
-MET_CUR_BG = "#ffe8cc"  # light orange for Met Website "Current"
+# Header blue, group colours (light tints for "Current" body cells; sub-header row tinted per group)
+HEAD_BLUE = "background:#0070c0;color:#fff;font-weight:700;"
+GROUPS = [   # (title, sub-header tint, current-cell tint)
+    ("Met Website", "#fce4d6", "#fce4d6"),
+    ("Weather Station", "#d9d9d9", "#d9d9d9"),
+    ("Windy", "#e2efda", "#e2efda"),
+]
+SUBS = ("Current", "Today Max", "Tmrw Max", "Over Tmrw")
+KEYS = ("current", "max_rec", "high_d1", "high_d2")
 
 # Frozen (sticky) left columns: widths in px, left offsets are cumulative
 FROZEN_W = [46, 150, 95, 115]
 FROZEN_L = [0, 46, 196, 291]
 # Header rows: heights in px, sticky top offsets are cumulative
-ROW_H = [36, 54, 58]
-ROW_T = [0, 36, 90]
+ROW_H = [38, 44]
+ROW_T = [0, 38]
 
 BASE = ("box-sizing:border-box;border-right:1px solid #b8bec6;border-bottom:1px solid #b8bec6;"
         "padding:4px 8px;text-align:center;font-size:13px;color:#111;")
 BODY_BG = "background:#ffffff;"
-HEAD_BG = "background:#e3e7ec;font-weight:600;"
 
 
 def _frozen_style(i: int, header: bool) -> str:
     w, left = FROZEN_W[i], FROZEN_L[i]
-    st_ = (f"position:sticky;left:{left}px;top:{0 if header else 'auto'}{'px' if header else ''};"
-           f"width:{w}px;min-width:{w}px;max-width:{w}px;z-index:{6 if header else 3};")
-    return st_
+    return (f"position:sticky;left:{left}px;top:{0 if header else 'auto'}{'px' if header else ''};"
+            f"width:{w}px;min-width:{w}px;max-width:{w}px;z-index:{6 if header else 3};")
+
+
+def windy_url(lat, lon) -> str:
+    return f"https://www.windy.com/{lat:.3f}/{lon:.3f}?{lat:.3f},{lon:.3f},9"
+
+
+def click_cell(url: str, title: str) -> str:
+    return (f'<a style="color:#0b3d91" href="{html.escape(url)}" target="_blank" rel="noopener" '
+            f'title="{html.escape(title)}">Click</a>')
 
 
 def build_table(rows: list[dict]) -> str:
-    total_w = sum(FROZEN_W) + 4 * 105 + len(SITES) * 4 * 100
+    total_w = sum(FROZEN_W) + len(GROUPS) * 4 * 105
     h = [f'<div style="overflow:auto;max-height:78vh;border:1px solid #b8bec6;border-radius:4px;background:#fff">'
          f'<table style="border-collapse:separate;border-spacing:0;min-width:{total_w}px;width:100%">']
     h.append("<thead>")
 
     def th(txt, extra="", **kw):
         attrs = " ".join(f'{k}="{v}"' for k, v in kw.items())
-        return f'<th {attrs} style="{BASE}{HEAD_BG}{extra}">{txt}</th>'
+        return f'<th {attrs} style="{BASE}{extra}">{txt}</th>'
 
     sticky = lambda row: f"position:sticky;top:{ROW_T[row]}px;z-index:4;"
 
-    # Row 1: 4 frozen headers (span 3 rows) + 2 group headers
+    # Row 1: 4 frozen headers (span 2 rows) + 3 group headers
     r1 = "".join(
-        th(t, _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=3)
-        for i, t in enumerate(["Sr.", "City with Country", "Day End Time<br>(PKT)", "Poly Market"]))
-    r1 += th("Met Website", sticky(0) + f"height:{ROW_H[0]}px;", colspan=4)
-    r1 += th("Temperature °C &amp; °F", sticky(0) + f"height:{ROW_H[0]}px;", colspan=len(SITES) * 4)
+        th(t, HEAD_BLUE + _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=2)
+        for i, t in enumerate(["Sr.", "City with<br>Country", "Day End<br>(PKT)", "Poly<br>Market"]))
+    for title, _sub, _cur in GROUPS:
+        r1 += th(title, HEAD_BLUE + sticky(0) + f"height:{ROW_H[0]}px;", colspan=4)
     h.append(f"<tr>{r1}</tr>")
 
-    # Row 2: Met Website sub-headers (span rows 2-3) + the 2 site names
-    hh = ROW_H[1] + ROW_H[2]
-    r2 = "".join(
-        th(t, sticky(1) + f"height:{hh}px;width:105px;min-width:105px;"
-              f"{'background:' + MET_CUR_BG + ';' if i == 0 else ''}", rowspan=2)
-        for i, t in enumerate(("Current", "Today<br>Max. Recd.<br>Temp.", "Tomorrow<br>Max. Recd.<br>Temp.",
-                               "Day After<br>Tomorrow<br>Max. Recd. Temp.")))
-    r2 += th('City ki met website<br><span style="font-weight:400;font-size:11px">(aapki list ka link)</span>',
-             sticky(1) + f"height:{ROW_H[1]}px;", colspan=4)
+    # Row 2: Current / Today Max / Tmrw Max / Over Tmrw for each group
+    r2 = ""
+    for _title, sub, _cur in GROUPS:
+        for t in SUBS:
+            r2 += th(t, f"background:{sub};font-weight:500;font-size:14px;" + sticky(1) +
+                     f"height:{ROW_H[1]}px;width:105px;min-width:105px;")
     h.append(f"<tr>{r2}</tr>")
-
-    # Row 3: Current / Max. Recd. under each website
-    r3 = ""
-    for i, _ in enumerate(SITES):
-        r3 += th("Current", sticky(2) + f"height:{ROW_H[2]}px;width:100px;min-width:100px;background:{CUR_BG[i % len(CUR_BG)]};")
-        r3 += th("Max. Recd.", sticky(2) + f"height:{ROW_H[2]}px;width:100px;min-width:100px;")
-        r3 += th("Tomorrow<br>Max. Recd.<br>Temp.", sticky(2) + f"height:{ROW_H[2]}px;width:100px;min-width:100px;")
-        r3 += th("Day After<br>Tomorrow<br>Max. Recd. Temp.", sticky(2) + f"height:{ROW_H[2]}px;width:110px;min-width:110px;")
-    h.append(f"<tr>{r3}</tr>")
     h.append("</thead><tbody>")
 
     for i, r in enumerate(rows, 1):
@@ -670,33 +670,34 @@ def build_table(rows: list[dict]) -> str:
             fz(2, r["day_end"]),
             fz(3, f'<a href="{html.escape(r["link"])}" target="_blank" rel="noopener" style="color:#0b3d91">{r["poly_html"]}</a>', True),
         ]
-        metar_url = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
 
-        # Met Website: us desh ki met service ka airport data; na mile to "Click" (met service ka page)
+        def add(k, cell, cur_bg):
+            cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
+            bg = f"background:{cur_bg};font-weight:600;" if k == "current" else row_bg
+            cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
+
+        # 1) Met Website: us desh ki met service ka airport data; na mile to "Click" (us city ki website)
         off = r["official"]
-        for k in ("current", "max_rec", "high_d1", "high_d2"):
-            if k in off:
-                val, url, note = off[k]
-                cell = temp_cell(val, url, note)
-            else:
-                cell = (f'<a href="{html.escape(r["met_url"])}" target="_blank" rel="noopener" '
-                        f'title="{html.escape(r["met_name"])}: is city ka data dashboard tak nahi aata - website kholein">Click</a>')
-            cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
-            bg = f"background:{MET_CUR_BG};font-weight:600;" if k == "current" else row_bg
-            cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
-
-        # "Temperature C & F" group: aapki list ke link se; data na mile to "Click" us link par
         list_url = LIST_LINKS.get(norm_city(r["city"]), r["met_url"])
-        for k in ("current", "max_rec", "high_d1", "high_d2"):
+        for k in KEYS:
             if k in off:
                 val, url, note = off[k]
-                cell = temp_cell(val, url, note)
+                add(k, temp_cell(val, url, note), GROUPS[0][2])
             else:
-                cell = (f'<a href="{html.escape(list_url)}" target="_blank" rel="noopener" '
-                        f'title="Is city ka data bina API key ke nahi milta - website kholein">Click</a>')
-            cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
-            bg = f"background:{CUR_BG[0]};font-weight:600;" if k == "current" else row_bg
-            cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
+                add(k, click_cell(list_url, f"{r['met_name']}: is city ka data dashboard tak nahi aata - website kholein"), GROUPS[0][2])
+
+        # 2) Weather Station (vweatherstation.com): site ka data Open-Meteo se aata hai -> Open-Meteo, airport ki coordinates par
+        om = r["src"].get("Open-Meteo.com", {})
+        om_url = source_url(r["lat"], r["lon"], "best_match")
+        for k in KEYS:
+            add(k, temp_cell(om.get(k), om_url,
+                             "Open-Meteo (vweatherstation.com ka data source), airport ki coordinates par - vweatherstation ka apna page nahi"),
+                GROUPS[1][2])
+
+        # 3) Windy: Windy ka data bina API key ke nahi milta -> "Click" (Windy us airport ki location par)
+        wu = windy_url(r["lat"], r["lon"])
+        for k in KEYS:
+            add(k, click_cell(wu, "Windy.com is airport ki location par kholein (data dashboard tak nahi aata)"), GROUPS[2][2])
         h.append("<tr>" + "".join(cells) + "</tr>")
     h.append("</tbody></table></div>")
     return "".join(h)
@@ -838,11 +839,13 @@ with tab_t:
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
-    st.caption("MET WEBSITE columns: sirf us desh ki apni met service ka data (airport/city station). Helsinki: FMI (Helsinki-Vantaa airport); Munich: DWD (Munich Airport station, Current + Max; forecast ke liye Click); "
-               "Singapore: MSS/NEA (Changi station + 4-day forecast); Hong Kong: HKO (Chek Lap Kok airport current, forecast poore HK ka); "
-               "US cities (NYC, Chicago, Miami, Dallas, ... Honolulu): NWS (us city ke airport ki observations + NWS forecast; tabhi jab Polymarket ka station wohi airport ho). Click par wahi data/page khulta hai jahan se number aaya. 'Temperature C & F' group mein bhi yehi data hai, aur 'Click' par aapki list ka link khulta hai. "
-               "'Click' = us city ki met service ka data bina API key ke nahi milta (ya woh us column ke liye available nahi), click se unki website khulti hai. "
-               "Max. Recd. = local din ka ab tak ka maximum (jahan available ho).")
+    st.caption("MET WEBSITE: sirf us desh ki apni met service ka data (airport/city station), jahan free API milti hai - Helsinki: FMI, Singapore: NEA/MSS, "
+               "Hong Kong: HKO (airport), Munich: DWD (airport), US cities: NWS (us airport ki observations + forecast, tabhi jab Polymarket ka station wohi airport ho). "
+               "Baqi cities mein 'Click' - us city ki met website kholta hai. "
+               "WEATHER STATION: vweatherstation.com apna data Open-Meteo se leta hai aur uski koi public API nahi, is liye yahan Open-Meteo ('Best match') ke numbers hain, "
+               "airport ki coordinates par; click par wohi Open-Meteo request khulti hai. Ye vweatherstation page se thora alag ho sakta hai. "
+               "WINDY: Windy ka data bina API key ke nahi milta, is liye 'Click' - Windy us airport ki location par khulta hai. "
+               "Today Max = local din ka ab tak ka maximum (jahan available ho); Tmrw / Over Tmrw = forecast max.")
 
 with tab_m:
     if rows:
