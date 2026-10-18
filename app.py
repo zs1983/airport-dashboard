@@ -735,18 +735,16 @@ def build_table(rows: list[dict]) -> str:
         list_url = met_page(r["city"], r["icao"], r["met_url"])
         metar_page = f"https://aviationweather.gov/data/metar/?ids={r['icao']}&hours=24"
 
-        # 1) Met Website: us desh ki met service ka data jahan free API hai; warna airport METAR (obs) / Open-Meteo (forecast), label ke saath
+        # 1) Met Website: sirf us desh ki met service ka apna data; na mile to N/A (click: us ki website)
         off = r["official"]
         for k in KEYS:
             if k in off:
                 val, url, note = off[k]
                 add(k, temp_cell(val, url if url.startswith("https://www.weather.gov") or url.startswith("https://forecast.weather.gov") else list_url,
                                  note + " (click: us airport/city ka met service page)"), GROUPS[0][2])
-            elif k in ("current", "max_rec") and r["is_metar"]:
-                v = r["cur_v"] if k == "current" else r["max_v"]
-                add(k, temp_cell(v, metar_page, f"Data: {r['icao']} airport METAR (NOAA), {r['met_name']} ka apna data nahi. Click: us airport ki METAR (aviationweather.gov)") + tag("METAR"), GROUPS[0][2])
-            else:
-                add(k, temp_cell(om.get(k), list_url, f"Data: Open-Meteo model, {r['met_name']} ka apna data nahi. Click: {r['met_name']} website") + tag("model"), GROUPS[0][2])
+            else:   # met website ka apna data nahi -> N/A, click par us city ki met website
+                add(k, f'<a href="{html.escape(list_url)}" target="_blank" rel="noopener" '
+                       f'title="{html.escape(r["met_name"])}: iska data dashboard tak nahi aata - website kholein">N/A</a>', GROUPS[0][2])
 
         # 2) Weather Station (vweatherstation.com): site ka data Open-Meteo se aata hai -> Open-Meteo, airport ki coordinates par
         for k in KEYS:
@@ -900,9 +898,9 @@ with tab_t:
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
-    st.caption("MET WEBSITE: jahan us desh ki met service ka free data milta hai (Helsinki: FMI, Singapore: NEA/MSS, Hong Kong: HKO, Munich: DWD, US cities: NWS) "
-               "wahan unka apna data. Baqi cities mein number ke neeche likha hai: (METAR) = us airport ki NOAA METAR reading (Current / Today Max), (model) = Open-Meteo forecast "
-               "(Tmrw / Over Tmrw) - ye us desh ki met service ka apna data nahi hai. "
+    st.caption("MET WEBSITE: sirf us desh ki met service ka apna data (Helsinki: FMI, Singapore: NEA/MSS, Hong Kong: HKO, Munich: DWD, US cities: NWS - airport observations aur NWS forecast, "
+               "tabhi jab Polymarket ka station wohi airport ho). Jahan met website ka data bina API key ke nahi milta wahan N/A hai; click par us city ki met website khulti hai. "
+               "Number par click karne se wahi met website khulti hai jahan se data aaya. "
                "WEATHER STATION: vweatherstation.com apna data Open-Meteo se leta hai aur uski public API nahi, is liye Open-Meteo ('Best match') ke numbers hain. "
                "WINDY: Windy ka default model ECMWF hai; yahan Open-Meteo se ECMWF ke numbers hain, Windy ka apna data nahi. "
                "Sab numbers airport ki coordinates par hain; number par click karne se us column ki website khulti hai (tooltip mein asli data source likha hota hai). Today Max = local din ka ab tak ka maximum; Tmrw / Over Tmrw = forecast max.")
