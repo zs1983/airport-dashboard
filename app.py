@@ -783,10 +783,20 @@ if poly.empty:
 
 # City picker: sirf choose ki hui cities ka data (khali = filter ke hisab se sab)
 city_options = sorted(poly["city"].unique())
+# Sab cities select rakhein: jo naye market aayein wo bhi apne aap add ho jayein; user jo hataye wo hata rehta hai
+_known = st.session_state.get("known_cities", set())
+_cur = [c for c in st.session_state.get("picked", []) if c in city_options]
+st.session_state["picked"] = _cur + [c for c in city_options if c not in _known and c not in _cur]
+st.session_state["known_cities"] = set(city_options)
+_b1, _b2 = st.sidebar.columns(2)
+if _b1.button("Select all", use_container_width=True):
+    st.session_state["picked"] = list(city_options)
+if _b2.button("Clear all", use_container_width=True):
+    st.session_state["picked"] = []
 picked = st.sidebar.multiselect(
-    "Cities select karein", city_options,
-    default=city_options,   # sab Polymarket cities pehle se select
-    help="Shuru mein sab cities select hoti hain (aur % filter lagta hai). Kisi city ko hatane ke liye x dabayein.")
+    "Cities select karein", city_options, key="picked",
+    help="Shuru mein sab cities select hoti hain (aur % filter lagta hai). Kisi city ko hatane ke liye x dabayein; "
+         "'Select all' / 'Clear all' se sab ek saath.")
 
 # Filter: top-2 outcomes both inside [lo, hi]
 poly["top2"] = poly["buckets"].apply(lambda b: b[:2])
