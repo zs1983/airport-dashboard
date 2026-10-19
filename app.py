@@ -592,31 +592,16 @@ def fetch_weather(coords: tuple) -> tuple[dict, str | None, str | None]:
         return {}, f"Weather API error: {reason}", None
 
 
-def peak_time_html(end_iso: str, w: dict, stn: dict | None) -> str:
-    """Market wale din ka sab se zyada temperature kis time hoga/hua - Pakistani time mein.
-    Pehle forecast (Open-Meteo hourly) ka peak; agar aaj ka din hai aur peak guzar chuka ho to airport METAR ka asli peak."""
+def peak_time_html(end_iso: str, w: dict, stn: dict | None = None) -> str:
+    """Market wale din ka sab se zyada temperature aam tor par city ke local 2 PM - 4 PM ke beech aata hai;
+    ye window Pakistani time (PKT) mein (city ke local time zone / DST ke hisab se)."""
     try:
-        tzname = w.get("tz", "UTC")
-        zi = ZoneInfo(tzname)
-        mdate = datetime.fromisoformat(end_iso.replace("Z", "+00:00")).date()
-        fc = (w.get("peaks") or {}).get(mdate.isoformat())
-        fc_dt = datetime.fromisoformat(fc[0]).replace(tzinfo=zi) if fc else None
-        now = datetime.now(zi)
-        obs_dt = None
-        if stn and stn.get("obs") and mdate == now.date():
-            todays = [(ep, t) for ep, t in stn["obs"] if datetime.fromtimestamp(ep, zi).date() == mdate]
-            if todays:
-                top = max(t for _, t in todays)
-                obs_dt = datetime.fromtimestamp(min(ep for ep, t in todays if t == top), zi)
-        if obs_dt and (fc_dt is None or fc_dt <= now):
-            dt, tg = obs_dt, "recorded"
-        elif fc_dt:
-            dt, tg = fc_dt, "forecast"
-        else:
-            return "N/A"
-        dt = dt.astimezone(PKT)
-        return (f"{dt:%d %b %Y}<br>{dt:%I:%M %p}"
-                f'<br><span style="font-size:10px;font-weight:400;color:#555">({tg})</span>')
+        zi = ZoneInfo(w.get("tz", "UTC"))
+        d = datetime.fromisoformat(end_iso.replace("Z", "+00:00")).date()
+        t1 = datetime(d.year, d.month, d.day, 14, 0, tzinfo=zi).astimezone(PKT)
+        t2 = datetime(d.year, d.month, d.day, 16, 0, tzinfo=zi).astimezone(PKT)
+        f = lambda t: t.strftime("%I:%M %p").lstrip("0")
+        return f"{f(t1)} - {f(t2)}"
     except Exception:  # noqa: BLE001
         return "N/A"
 
@@ -673,8 +658,8 @@ def met_page(city: str, icao: str, fallback: str) -> str:
 CUR_BG = ["#d6ecff", "#d9f5dc", "#fff4c2", "#ffdfe6", "#e8dcff"]
 
 # Frozen (sticky) left columns: widths in px, left offsets are cumulative
-FROZEN_W = [46, 125, 95, 105, 115]
-FROZEN_L = [0, 46, 171, 266, 371]
+FROZEN_W = [46, 125, 95, 140, 115]
+FROZEN_L = [0, 46, 171, 266, 406]
 # Header rows: heights in px, sticky top offsets are cumulative
 ROW_H = [36, 54, 36, 36]
 ROW_T = [0, 36, 90, 126]
@@ -706,7 +691,7 @@ def build_table(rows: list[dict]) -> str:
     # Row 1: 4 frozen rowspan headers + group header
     r1 = "".join(
         th(t, _frozen_style(i, True) + f"height:{sum(ROW_H)}px;", rowspan=3)
-        for i, t in enumerate(["Sr.", "City with Country", "Day End Time<br>(PKT)", "Peak Temp<br>Time (PKT)", "Poly Market"]))
+        for i, t in enumerate(["Sr.", "City with Country", "Day End Time<br>(PKT)", "Peak Hours", "Poly Market"]))
     r1 += th("Met Website", f"position:sticky;top:0;z-index:5;height:{ROW_H[0]}px;", colspan=4)
     r1 += th("Temperature °C &amp; °F",
              f"position:sticky;top:{ROW_T[0]}px;z-index:4;height:{ROW_H[0]}px;", colspan=4 * n)
@@ -921,14 +906,14 @@ with tab_t:
             "met_website": r["met_url"],
             "polymarket": re.sub("<[^>]+>", "", r["poly_html"].replace("<br>", " | ")),
             "day_end_pkt": re.sub("<[^>]+>", " ", r["day_end"]),
-            "peak_temp_time_pkt": re.sub("<[^>]+>", " ", r["peak_html"]),
+            "peak_hours_pst": re.sub("<[^>]+>", " ", r["peak_html"]),
             **{f"{n}_{k}_c": r["src"].get(n, {}).get(k) for n, _, _ in SOURCES
                for k in ("current", "max_rec", "high_d1", "high_d2")}} for r in rows])
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
-    st.caption("PEAK TEMP TIME (PKT): market wale din ka sab se zyada temperature kis time hoga - Open-Meteo hourly forecast ka peak, '(forecast)'. "
-               "Agar wo din aaj ka hai aur peak guzar chuka hai to us airport ki METAR se asli peak time, '(recorded)'. "
+    st.caption("PEAK HOURS: market wale din ka sab se zyada temperature aam tor par city ke local 2 PM - 4 PM ke beech aata hai; "
+               "ye window us city ke time zone (DST samet) se Pakistani time (PST) mein badal kar dikhayi gayi hai. "
                "AVIATIONWEATHER.GOV: Current aur Today Max. Recd. = us airport ki NOAA METAR reading (click: aviationweather.gov ka METAR page). "
                "aviationweather.gov forecast temperature publish nahi karta, is liye Tomorrow / Day After Tomorrow Open-Meteo model hain, neeche '(model)' likha hai. "
                "MET WEBSITE: jahan us desh ki met service ka free data milta hai (Helsinki: FMI, Singapore: NEA/MSS, Hong Kong: HKO, Munich: DWD, US cities: NWS) wahan unka apna data; "
