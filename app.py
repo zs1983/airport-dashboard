@@ -749,7 +749,7 @@ def build_table(rows: list[dict]) -> str:
                 val, url, note = off[k]
                 cell = temp_cell(val, url if url.startswith("https://www.weather.gov") or url.startswith("https://forecast.weather.gov") else list_url,
                                  note + " (click: us airport/city ka met service page)")
-            elif k in ("current", "max_rec") and r["is_metar"]:
+            elif k in ("current", "max_rec") and r["is_metar"] and (r["cur_v"] if k == "current" else r["max_v"]) is not None:
                 v = r["cur_v"] if k == "current" else r["max_v"]
                 cell = temp_cell(v, metar_page, f"Data: {r['icao']} airport METAR (NOAA) - {r['met_name']} ka apna data nahi. Click: us airport ki METAR page") + tag("METAR")
             else:
@@ -761,7 +761,7 @@ def build_table(rows: list[dict]) -> str:
             if name == AVN:   # aviationweather.gov: METAR (Current / Today Max), forecast Open-Meteo "(model)"
                 for k in ("current", "max_rec", "high_d1", "high_d2"):
                     bg = (f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg)
-                    if k in ("current", "max_rec") and r["is_metar"]:
+                    if k in ("current", "max_rec") and r["is_metar"] and (r["cur_v"] if k == "current" else r["max_v"]) is not None:
                         v = r["cur_v"] if k == "current" else r["max_v"]
                         cell = temp_cell(v, metar_page, f"{r['icao']} airport METAR - aviationweather.gov (last obs {r['obs_note']})")
                     elif k in ("current", "max_rec"):
@@ -775,7 +775,12 @@ def build_table(rows: list[dict]) -> str:
             url = source_url(r["lat"], r["lon"], model)
             for k in ("current", "max_rec", "high_d1", "high_d2"):
                 bg = (f"background:{CUR_BG[si % len(CUR_BG)]};font-weight:600;" if k == "current" else row_bg)
-                cell = temp_cell(src.get(k), url).replace("<a href", '<a style="color:#0b3d91" href')
+                val = src.get(k)
+                if (val is None or pd.isna(val)) and om.get(k) is not None:   # is model ka value nahi mila -> Best match (label ke saath)
+                    cell = temp_cell(om.get(k), url, "Is model ka value nahi mila: Open-Meteo Best match value") + tag("best match")
+                else:
+                    cell = temp_cell(val, url)
+                cell = cell.replace("<a href", '<a style="color:#0b3d91" href')
                 cells.append(f'<td style="{BASE}{bg}white-space:nowrap;">{cell}</td>')
         h.append("<tr>" + "".join(cells) + "</tr>")
     h.append("</tbody></table></div>")
@@ -790,7 +795,7 @@ auto = st.sidebar.toggle("Auto refresh", value=True)
 interval = st.sidebar.select_slider("Refresh interval (sec)", [5, 10, 15, 30, 60], value=10)
 if auto:
     st_autorefresh(interval=interval * 1000, key="autorefresh")
-lo, hi = st.sidebar.slider("Poly Market filter (%)", 0, 100, (0, 40),
+lo, hi = st.sidebar.slider("Poly Market filter (%)", 0, 100, (20, 40),
                            help="Sab se zyada probability wale 2 outcomes dono is range mein hon.")
 show_all = st.sidebar.checkbox("% filter off karo (chuni hui sab cities dikhao)", value=False)
 if st.sidebar.button("Refresh now"):
@@ -912,6 +917,10 @@ with tab_t:
         st.download_button("Download CSV", flat.to_csv(index=False).encode(), "temperature_dashboard.csv", "text/csv")
     if skipped:
         st.caption("Location nahi mili (skip): " + ", ".join(skipped))
+    no_wx = [r["city"] for r in rows if not any((r["src"].get(n) or {}).get("current") is not None for n, _, _ in SOURCES)]
+    if no_wx:
+        st.caption("Weather (Open-Meteo) data nahi aaya, is liye in cities mein N/A: " + ", ".join(no_wx)
+                   + " - aksar Open-Meteo ki rate limit (429) ki wajah se; thori der baad 'Refresh now' dabayein.")
     st.caption("PEAK HOURS: market wale din ka sab se zyada temperature aam tor par city ke local 2 PM - 4 PM ke beech aata hai; "
                "ye window us city ke time zone (DST samet) se Pakistani time (PST) mein badal kar dikhayi gayi hai. "
                "AVIATIONWEATHER.GOV: Current aur Today Max. Recd. = us airport ki NOAA METAR reading (click: aviationweather.gov ka METAR page). "
