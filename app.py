@@ -790,7 +790,7 @@ auto = st.sidebar.toggle("Auto refresh", value=True)
 interval = st.sidebar.select_slider("Refresh interval (sec)", [5, 10, 15, 30, 60], value=10)
 if auto:
     st_autorefresh(interval=interval * 1000, key="autorefresh")
-lo, hi = st.sidebar.slider("Poly Market filter (%)", 0, 100, (20, 40),
+lo, hi = st.sidebar.slider("Poly Market filter (%)", 0, 100, (0, 40),
                            help="Sab se zyada probability wale 2 outcomes dono is range mein hon.")
 show_all = st.sidebar.checkbox("% filter off karo (chuni hui sab cities dikhao)", value=False)
 if st.sidebar.button("Refresh now"):
